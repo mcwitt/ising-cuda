@@ -58,7 +58,10 @@
             );
           in
           [
-            pkgs.stdenv.cc
+            pkgs.cudaPackages.backendStdenv.cc
+            pkgs.cudaPackages.cuda_nvcc
+            pkgs.cudaPackages.cuda_cudart
+            pkgs.cudaPackages.libcurand
             pkgs.gsl
 
             pkgs.clang-tools
