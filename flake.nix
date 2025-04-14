@@ -58,11 +58,15 @@
             );
           in
           [
-            pkgs.stdenv.cc
+            pkgs.cudaPackages.backendStdenv.cc
+            pkgs.cudaPackages.cuda_nvcc
+            pkgs.cudaPackages.cuda_cudart
+            pkgs.cudaPackages.libcurand
             pkgs.gsl
 
             pkgs.bear
             pkgs.clang-tools
+            pkgs.cudaPackages.cuda_sanitizer_api
             pkgs.gdb
 
             python
