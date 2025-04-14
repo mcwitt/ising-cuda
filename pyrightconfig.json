@@ -1,0 +1,11 @@
+{
+  "reportAny": false,
+  "reportMissingParameterType": false,
+  "reportMissingTypeStubs": false,
+  "reportUnknownArgumentType": false,
+  "reportUnknownLambdaType": false,
+  "reportUnknownMemberType": false,
+  "reportUnknownParameterType": false,
+  "reportUnknownVariableType": false,
+  "reportUnusedCallResult": false
+}
