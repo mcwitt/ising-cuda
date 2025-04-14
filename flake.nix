@@ -3,19 +3,27 @@
 
   inputs.nixpkgs.url = "github:nixos/nixpkgs/nixpkgs-unstable";
   inputs.git-hooks.url = "github:cachix/git-hooks.nix";
+  inputs.nixgl.url = "github:nix-community/nixGL";
 
   outputs =
     {
       self,
       nixpkgs,
       git-hooks,
+      nixgl,
     }:
 
     let
       system = "x86_64-linux";
       pkgs = import nixpkgs {
         inherit system;
-        config.allowUnfree = true;
+        config = {
+          allowUnfree = true;
+          cudaSupport = true;
+        };
+        overlays = [
+          nixgl.overlays.default
+        ];
       };
     in
     {
@@ -63,14 +71,20 @@
           [
             python
 
+            pkgs.cudaPackages.cuda_nvcc
+            pkgs.cudaPackages.cuda_cudart
+            pkgs.cudaPackages.libcurand
+
             pkgs.gsl
 
             pkgs.bear
             pkgs.clang-tools
+            pkgs.cudaPackages.cuda_sanitizer_api
             pkgs.gdb
 
             pkgs.prek
           ]
+          ++ nixpkgs.lib.optional (builtins ? currentTime) pkgs.nixgl.auto.nixGLDefault
           ++ self.checks.${system}.pre-commit-check.enabledPackages;
       };
     };
