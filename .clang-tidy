@@ -1,0 +1,12 @@
+Checks: >
+  -*,
+
+  bugprone-*,
+  cuda-*,
+  modernize-*,
+  performance-*,
+
+  -bugprone-easily-swappable-parameters,
+  -modernize-avoid-c-arrays,
+
+WarningsAsErrors: '*'
