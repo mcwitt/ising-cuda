@@ -27,6 +27,56 @@ __global__ void k_init_random(
   spin[i] = 2 * p - 1;
 };
 
+constexpr __host__ __device__ auto ceil_div(unsigned int x, unsigned int y)
+    -> unsigned int {
+  return (x + y - 1) / y;
+}
+
+template <typename T> __device__ void k_accum_block_sum(int &val, T *out) {
+
+  /* Computes the sum of val for all threads in a block and
+    accumulates the result in out. */
+
+  // 1. Compute sum of values in each warp
+
+  for (int offset = warpSize / 2; offset > 0; offset /= 2) {
+    val += __shfl_down_sync(0xFFFFFFFF, val, offset);
+  }
+
+  // At this point, the first thread in each warp ("warp leader") has
+  // for its value the sum of the values over the warp.
+
+  // 2. Warp leaders store warp sums in shared memory
+
+  __shared__ int warp_sums[32];
+
+  const unsigned int tid = threadIdx.x + threadIdx.y * blockDim.x;
+
+  if (tid % warpSize == 0) {
+    warp_sums[tid / warpSize] = val;
+  }
+
+  // 3. Threads in first warp reduce warp sums
+
+  __syncthreads(); // ensure all threads see the final value of warp_sums
+
+  const unsigned int tpb = blockDim.x * blockDim.y;
+  const unsigned int nwarps = ceil_div(tpb, warpSize);
+
+  if (tid < warpSize) {
+    val = (tid < nwarps) ? warp_sums[tid] : 0;
+
+    for (int offset = warpSize / 2; offset > 0; offset /= 2) {
+      val += __shfl_down_sync(0xFFFFFFFF, val, offset);
+    }
+
+    // First warp leader updates out
+    if (tid == 0) {
+      atomicAdd(out, val);
+    }
+  }
+}
+
 __global__ void k_sweep(
     const unsigned int parity,
     const float hext,
@@ -41,32 +91,36 @@ __global__ void k_sweep(
   if (i >= L_ || j >= L_)
     return;
 
-  if ((i + j) % 2 != parity)
-    return;
+  int local_naccept = 0;
 
-  const unsigned int iprev = (i == 0) ? L_ - 1 : i - 1;
-  const unsigned int jprev = (j == 0) ? L_ - 1 : j - 1;
+  if ((i + j) % 2 == parity) {
 
-  const unsigned int inext = (i == L_ - 1) ? 0 : i + 1;
-  const unsigned int jnext = (j == L_ - 1) ? 0 : j + 1;
+    const unsigned int iprev = (i == 0) ? L_ - 1 : i - 1;
+    const unsigned int jprev = (j == 0) ? L_ - 1 : j - 1;
 
-  const int nbrsum = spin[i * L_ + jprev] + spin[i * L_ + jnext] +
-                     spin[iprev * L_ + j] + spin[inext * L_ + j];
+    const unsigned int inext = (i == L_ - 1) ? 0 : i + 1;
+    const unsigned int jnext = (j == L_ - 1) ? 0 : j + 1;
 
-  const float h = (float)nbrsum + hext;
-  const unsigned int idx = i * L + j;
-  const float de = 2.0f * (float)spin[idx] * h;
+    const int nbrsum = spin[i * L_ + jprev] + spin[i * L_ + jnext] +
+                       spin[iprev * L_ + j] + spin[inext * L_ + j];
 
-  if (de <= 0) {
-    spin[i * L_ + j] *= -1;
-    atomicAdd(naccept, 1);
-  } else {
-    const float prob = exp(-static_cast<float>(de) / temperature);
-    if (noise[i * L_ + j] < prob) {
+    const float h = (float)nbrsum + hext;
+    const unsigned int idx = i * L + j;
+    const float de = 2.0f * (float)spin[idx] * h;
+
+    if (de <= 0) {
       spin[i * L_ + j] *= -1;
-      atomicAdd(naccept, 1);
+      local_naccept = 1;
+    } else {
+      const float prob = exp(-static_cast<float>(de) / temperature);
+      if (noise[i * L_ + j] < prob) {
+        spin[i * L_ + j] *= -1;
+        local_naccept = 1;
+      }
     }
   }
+
+  k_accum_block_sum(local_naccept, naccept);
 }
 
 template <typename T>
@@ -78,7 +132,9 @@ k_accum(const T *const __restrict__ vals, T *const __restrict__ out) {
   if (i >= N)
     return;
 
-  atomicAdd(out, vals[i]);
+  int local_sum = vals[i];
+
+  k_accum_block_sum(local_sum, out);
 }
 
 __global__ void k_accum_scalar_moments(
@@ -90,11 +146,6 @@ __global__ void k_accum_scalar_moments(
 
   atomicAdd(m2sum, m * m);
   atomicAdd(m4sum, m * m * m * m);
-}
-
-constexpr auto ceil_div(const unsigned int x, const unsigned int y)
-    -> unsigned int {
-  return (x + y - 1) / y;
 }
 
 auto parse_float(const char *s) -> float {
