@@ -29,6 +29,11 @@ k_init_random(const float *__restrict__ noise, int *__restrict__ spin) {
   spin[i * L_ + j] = 2 * p - 1;
 };
 
+__host__ __device__ inline auto ceil_div(unsigned int x, unsigned int y)
+    -> unsigned int {
+  return (x + y - 1) / y;
+}
+
 template <unsigned int c>
 __global__ void k_sweep(
     float temperature,
@@ -44,44 +49,99 @@ __global__ void k_sweep(
   if (i >= L_ || j >= L_)
     return;
 
-  if ((i + j) % 2 != c)
-    return;
+  int local_naccept = 0;
 
-  const unsigned int iprev = (i == 0) ? L_ - 1 : i - 1;
-  const unsigned int jprev = (j == 0) ? L_ - 1 : j - 1;
+  if ((i + j) % 2 == c) {
 
-  const unsigned int inext = (i == L_ - 1) ? 0 : i + 1;
-  const unsigned int jnext = (j == L_ - 1) ? 0 : j + 1;
+    const unsigned int iprev = (i == 0) ? L_ - 1 : i - 1;
+    const unsigned int jprev = (j == 0) ? L_ - 1 : j - 1;
 
-  const int nbrsum = spin[i * L_ + jprev] + spin[i * L_ + jnext] +
-                     spin[iprev * L_ + j] + spin[inext * L_ + j];
-  const int de = 2 * spin[i * L_ + j] * nbrsum;
+    const unsigned int inext = (i == L_ - 1) ? 0 : i + 1;
+    const unsigned int jnext = (j == L_ - 1) ? 0 : j + 1;
 
-  if (de <= 0) {
-    spin[i * L_ + j] *= -1;
-    atomicAdd(naccept, 1);
-  } else {
-    const float prob = exp(-static_cast<float>(de) / temperature);
-    if (noise[i * L_ + j] < prob) {
+    const int nbrsum = spin[i * L_ + jprev] + spin[i * L_ + jnext] +
+                       spin[iprev * L_ + j] + spin[inext * L_ + j];
+
+    const int de = 2 * spin[i * L_ + j] * nbrsum;
+
+    if (de <= 0) {
       spin[i * L_ + j] *= -1;
-      atomicAdd(naccept, 1);
+      local_naccept = 1;
+    } else {
+      const float prob = exp(-static_cast<float>(de) / temperature);
+      if (noise[i * L_ + j] < prob) {
+        spin[i * L_ + j] *= -1;
+        local_naccept = 1;
+      }
+    }
+  }
+
+  for (int offset = warpSize / 2; offset > 0; offset /= 2) {
+    local_naccept += __shfl_down_sync(0xFFFFFFFF, local_naccept, offset);
+  }
+
+  __shared__ int warp_naccept[32];
+
+  const unsigned int tid = threadIdx.x + threadIdx.y * blockDim.x;
+
+  if (tid % warpSize == 0) {
+    warp_naccept[tid / warpSize] = local_naccept;
+  }
+
+  __syncthreads();
+
+  const unsigned int tpb = blockDim.x * blockDim.y;
+
+  if (tid < warpSize) {
+    local_naccept = (tid < ceil_div(tpb, warpSize)) ? warp_naccept[tid] : 0;
+
+    for (int offset = warpSize / 2; offset > 0; offset /= 2) {
+      local_naccept += __shfl_down_sync(0xFFFFFFFF, local_naccept, offset);
+    }
+
+    if (tid == 0) {
+      atomicAdd(naccept, local_naccept);
     }
   }
 }
 
-__global__ void k_accum_magnetization(
-    const int *__restrict__ spin, int *__restrict__ magnetization) {
+__global__ void
+k_accum_magnetization(const int *__restrict__ spin, int *__restrict__ magn) {
   const unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
   const unsigned int j = blockIdx.y * blockDim.y + threadIdx.y;
 
   if (i >= L_ || j >= L_)
     return;
 
-  atomicAdd(magnetization, spin[i * L_ + j]);
-}
+  int local_magn = spin[i * L_ + j];
 
-inline auto ceil_div(unsigned int x, unsigned int y) -> unsigned int {
-  return (x + y - 1) / y;
+  for (int offset = warpSize / 2; offset > 0; offset /= 2) {
+    local_magn += __shfl_down_sync(0xFFFFFFFF, local_magn, offset);
+  }
+
+  __shared__ int warp_magn[32];
+
+  const unsigned int tid = threadIdx.x + threadIdx.y * blockDim.x;
+
+  if (tid % warpSize == 0) {
+    warp_magn[tid / warpSize] = local_magn;
+  }
+
+  __syncthreads();
+
+  const unsigned int tpb = blockDim.x * blockDim.y;
+
+  if (tid < warpSize) {
+    local_magn = (tid < ceil_div(tpb, warpSize)) ? warp_magn[tid] : 0;
+
+    for (int offset = warpSize / 2; offset > 0; offset /= 2) {
+      local_magn += __shfl_down_sync(0xFFFFFFFF, local_magn, offset);
+    }
+
+    if (tid == 0) {
+      atomicAdd(magn, local_magn);
+    }
+  }
 }
 
 void parse_args(int argc, char *argv[], long *n_samples, unsigned long *seed) {
