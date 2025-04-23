@@ -34,6 +34,36 @@ __host__ __device__ inline auto ceil_div(unsigned int x, unsigned int y)
   return (x + y - 1) / y;
 }
 
+__device__ void k_reduce_sum(int &val, int *out) {
+  for (int offset = warpSize / 2; offset > 0; offset /= 2) {
+    val += __shfl_down_sync(0xFFFFFFFF, val, offset);
+  }
+
+  __shared__ int warp_sums[32];
+
+  const unsigned int tid = threadIdx.x + threadIdx.y * blockDim.x;
+
+  if (tid % warpSize == 0) {
+    warp_sums[tid / warpSize] = val;
+  }
+
+  __syncthreads();
+
+  const unsigned int tpb = blockDim.x * blockDim.y;
+
+  if (tid < warpSize) {
+    val = (tid < ceil_div(tpb, warpSize)) ? warp_sums[tid] : 0;
+
+    for (int offset = warpSize / 2; offset > 0; offset /= 2) {
+      val += __shfl_down_sync(0xFFFFFFFF, val, offset);
+    }
+
+    if (tid == 0) {
+      atomicAdd(out, val);
+    }
+  }
+}
+
 template <unsigned int c>
 __global__ void k_sweep(
     float temperature,
@@ -76,33 +106,7 @@ __global__ void k_sweep(
     }
   }
 
-  for (int offset = warpSize / 2; offset > 0; offset /= 2) {
-    local_naccept += __shfl_down_sync(0xFFFFFFFF, local_naccept, offset);
-  }
-
-  __shared__ int warp_naccept[32];
-
-  const unsigned int tid = threadIdx.x + threadIdx.y * blockDim.x;
-
-  if (tid % warpSize == 0) {
-    warp_naccept[tid / warpSize] = local_naccept;
-  }
-
-  __syncthreads();
-
-  const unsigned int tpb = blockDim.x * blockDim.y;
-
-  if (tid < warpSize) {
-    local_naccept = (tid < ceil_div(tpb, warpSize)) ? warp_naccept[tid] : 0;
-
-    for (int offset = warpSize / 2; offset > 0; offset /= 2) {
-      local_naccept += __shfl_down_sync(0xFFFFFFFF, local_naccept, offset);
-    }
-
-    if (tid == 0) {
-      atomicAdd(naccept, local_naccept);
-    }
-  }
+  k_reduce_sum(local_naccept, naccept);
 }
 
 __global__ void
@@ -115,33 +119,7 @@ k_accum_magnetization(const int *__restrict__ spin, int *__restrict__ magn) {
 
   int local_magn = spin[i * L_ + j];
 
-  for (int offset = warpSize / 2; offset > 0; offset /= 2) {
-    local_magn += __shfl_down_sync(0xFFFFFFFF, local_magn, offset);
-  }
-
-  __shared__ int warp_magn[32];
-
-  const unsigned int tid = threadIdx.x + threadIdx.y * blockDim.x;
-
-  if (tid % warpSize == 0) {
-    warp_magn[tid / warpSize] = local_magn;
-  }
-
-  __syncthreads();
-
-  const unsigned int tpb = blockDim.x * blockDim.y;
-
-  if (tid < warpSize) {
-    local_magn = (tid < ceil_div(tpb, warpSize)) ? warp_magn[tid] : 0;
-
-    for (int offset = warpSize / 2; offset > 0; offset /= 2) {
-      local_magn += __shfl_down_sync(0xFFFFFFFF, local_magn, offset);
-    }
-
-    if (tid == 0) {
-      atomicAdd(magn, local_magn);
-    }
-  }
+  k_reduce_sum(local_magn, magn);
 }
 
 void parse_args(int argc, char *argv[], long *n_samples, unsigned long *seed) {
