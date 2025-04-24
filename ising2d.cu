@@ -4,6 +4,7 @@
 #include <ctime>
 #include <cuda.h>
 #include <curand.h>
+#include <vector>
 
 constexpr unsigned int D_ = 2;
 
@@ -16,11 +17,12 @@ constexpr unsigned long L_ = 64;
 constexpr unsigned long N = L_ * L_;
 
 __global__ void k_init_random(
-    const float *const __restrict__ noise, int *const __restrict__ spin) {
-
+    const size_t nt,
+    const float *const __restrict__ noise,
+    int *const __restrict__ spin) {
   const unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
 
-  if (i >= N)
+  if (i >= nt * N)
     return;
 
   const int p = noise[i] < 0.5;
@@ -80,15 +82,17 @@ template <typename T> __device__ void k_accum_block_sum(int &val, T *out) {
 __global__ void k_sweep(
     const unsigned int parity,
     const float hext,
-    const float temperature,
+    const size_t nt,
+    const float *temps,
     const float *__restrict__ noise,
     int *const __restrict__ spin,
     unsigned long long *const __restrict__ naccept) {
 
   const unsigned int j = blockIdx.x * blockDim.x + threadIdx.x;
   const unsigned int i = blockIdx.y * blockDim.y + threadIdx.y;
+  const unsigned int t = blockIdx.z * blockDim.z + threadIdx.z;
 
-  if (i >= L_ || j >= L_)
+  if (t >= nt || i >= L_ || j >= L_)
     return;
 
   int local_naccept = 0;
@@ -101,51 +105,65 @@ __global__ void k_sweep(
     const unsigned int inext = (i == L_ - 1) ? 0 : i + 1;
     const unsigned int jnext = (j == L_ - 1) ? 0 : j + 1;
 
-    const int nbrsum = spin[i * L_ + jprev] + spin[i * L_ + jnext] +
-                       spin[iprev * L_ + j] + spin[inext * L_ + j];
+    const unsigned int offset = t * N;
+
+    const int nbrsum =
+        spin[offset + i * L_ + jprev] + spin[offset + i * L_ + jnext] +
+        spin[offset + iprev * L_ + j] + spin[offset + inext * L_ + j];
 
     const float h = (float)nbrsum + hext;
-    const unsigned int idx = i * L + j;
-    const float de = 2.0f * (float)spin[idx] * h;
+    const unsigned int idx = offset + i * L_ + j;
+    const int s = spin[idx];
+    const float de = 2.0f * (float)s * h;
 
     if (de <= 0) {
-      spin[i * L_ + j] *= -1;
+      spin[idx] = -s;
       local_naccept = 1;
     } else {
-      const float prob = exp(-static_cast<float>(de) / temperature);
-      if (noise[i * L_ + j] < prob) {
-        spin[i * L_ + j] *= -1;
+      const float temp = temps[t];
+      const float prob = exp(-static_cast<float>(de) / temp);
+      if (noise[idx] < prob) {
+        spin[idx] = -s;
         local_naccept = 1;
       }
     }
   }
 
-  k_accum_block_sum(local_naccept, naccept);
+  k_accum_block_sum(local_naccept, &naccept[t]);
 }
 
 template <typename T>
-__global__ void
-k_accum(const T *const __restrict__ vals, T *const __restrict__ out) {
+__global__ void k_accum(
+    const size_t nt,
+    const T *const __restrict__ vals,
+    T *const __restrict__ out) {
 
   const unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+  const unsigned int t = blockIdx.y * blockDim.y + threadIdx.y;
 
-  if (i >= N)
+  if (t >= nt || i >= N)
     return;
 
-  int local_sum = vals[i];
+  int local_sum = vals[t * N + i];
 
-  k_accum_block_sum(local_sum, out);
+  k_accum_block_sum(local_sum, &out[t]);
 }
 
 __global__ void k_accum_scalar_moments(
+    const size_t nt,
     const int *const __restrict__ sum,
     float *const __restrict__ m2sum,
     float *const __restrict__ m4sum) {
 
-  float m = static_cast<float>(*sum) / static_cast<float>(N);
+  const unsigned int t = blockIdx.x * blockDim.x + threadIdx.x;
 
-  atomicAdd(m2sum, m * m);
-  atomicAdd(m4sum, m * m * m * m);
+  if (t >= nt)
+    return;
+
+  float m = static_cast<float>(sum[t]) / static_cast<float>(N);
+
+  atomicAdd(&m2sum[t], m * m);
+  atomicAdd(&m4sum[t], m * m * m * m);
 }
 
 auto parse_float(const char *s) -> float {
@@ -186,6 +204,17 @@ void parse_args(
   *seed = parse_long(argv[4]);
 }
 
+auto read_floats() -> std::vector<float> {
+  std::vector<float> vals;
+  float val;
+
+  while (scanf("%f", &val) == 1) {
+    vals.push_back(val);
+  }
+
+  return vals;
+}
+
 auto main(int argc, char *argv[]) -> int {
   float hext;
   long n_samples;
@@ -193,87 +222,99 @@ auto main(int argc, char *argv[]) -> int {
   unsigned long seed;
   parse_args(argc, argv, &hext, &n_samples, &sweeps_per_sample, &seed);
 
+  const std::vector<float> temps = read_floats();
+  const size_t nt = temps.size();
+
   int *d_spin;
   float *d_noise;
+  float *d_temps;
   unsigned long long *d_naccept;
   int *d_spinsum;
   float *d_m2sum;
   float *d_m4sum;
 
-  cudaMalloc(&d_spin, N * sizeof(int));
-  cudaMalloc(&d_noise, N * sizeof(float));
-  cudaMalloc(&d_naccept, sizeof(unsigned long long));
-  cudaMalloc(&d_spinsum, sizeof(int));
-  cudaMalloc(&d_m2sum, sizeof(float));
-  cudaMalloc(&d_m4sum, sizeof(float));
+  cudaMalloc(&d_spin, nt * N * sizeof(int));
+  cudaMalloc(&d_noise, nt * N * sizeof(float));
+
+  cudaMalloc(&d_temps, nt * sizeof(float));
+  cudaMalloc(&d_naccept, nt * sizeof(unsigned long long));
+  cudaMalloc(&d_spinsum, nt * sizeof(int));
+  cudaMalloc(&d_m2sum, nt * sizeof(float));
+  cudaMalloc(&d_m4sum, nt * sizeof(float));
+
+  cudaMemcpy(d_temps, temps.data(), nt * sizeof(float), cudaMemcpyHostToDevice);
+
+  constexpr dim3 blockDim(32, 32, 1);
+  dim3 gridDim(
+      ceil_div(L_, blockDim.x),
+      ceil_div(L_, blockDim.y),
+      ceil_div(nt, blockDim.z));
+
+  curandGenerator_t gen;
+  curandCreateGenerator(&gen, CURAND_RNG_PSEUDO_DEFAULT);
+  curandSetPseudoRandomGeneratorSeed(gen, seed);
+  curandGenerateUniform(gen, d_noise, nt * N);
+
+  k_init_random<<<ceil_div(nt * N, 32), 32>>>(nt, d_noise, d_spin);
 
   printf("D,L,h_ext,sweeps_per_sample,seed,temperature,sample,accept_rate,"
          "<m^2>,<m^4>,time_s\n");
 
-  float temperature;
+  for (int isample = 0; isample < n_samples; ++isample) {
 
-  while (scanf("%f", &temperature) == 1) {
-    curandGenerator_t gen;
-    curandCreateGenerator(&gen, CURAND_RNG_PSEUDO_DEFAULT);
-    curandSetPseudoRandomGeneratorSeed(gen, seed);
-    curandGenerateUniform(gen, d_noise, N);
+    cudaMemset(d_naccept, 0, nt * sizeof(unsigned long long));
 
-    k_init_random<<<ceil_div(N, 32), 32>>>(d_noise, d_spin);
+    cudaMemset(d_m2sum, 0, nt * sizeof(float));
+    cudaMemset(d_m4sum, 0, nt * sizeof(float));
 
-    for (int isample = 0; isample < n_samples; ++isample) {
+    clock_t start_time = clock();
 
-      cudaMemset(d_naccept, 0, sizeof(unsigned long long));
-      cudaMemset(d_m2sum, 0, sizeof(float));
-      cudaMemset(d_m4sum, 0, sizeof(float));
+    for (int isweep = 0; isweep < sweeps_per_sample; ++isweep) {
+      curandGenerateUniform(gen, d_noise, nt * N);
 
-      clock_t start_time = clock();
+      // checkerboard updates
 
-      for (int isweep = 0; isweep < sweeps_per_sample; ++isweep) {
-        curandGenerateUniform(gen, d_noise, N);
+      static_assert(blockDim.z == 1, "require blockDim.z == 1");
 
-        constexpr dim3 blockDim(32, 32);
-        dim3 gridDim(ceil_div(L_, blockDim.x), ceil_div(L_, blockDim.y));
+      k_sweep<<<gridDim, blockDim>>>(
+          0, hext, nt, d_temps, d_noise, d_spin, d_naccept); // light squares
 
-        // checkerboard updates
-        k_sweep<<<gridDim, blockDim>>>(
-            0,
-            hext,
-            temperature,
-            d_noise,
-            d_spin,
-            d_naccept); // update light squares
-        k_sweep<<<gridDim, blockDim>>>(
-            1,
-            hext,
-            temperature,
-            d_noise,
-            d_spin,
-            d_naccept); // update dark squares
+      k_sweep<<<gridDim, blockDim>>>(
+          1, hext, nt, d_temps, d_noise, d_spin, d_naccept); // dark squares
 
-        // accumulate magnetization
-        cudaMemset(d_spinsum, 0, sizeof(int));
-        k_accum<<<ceil_div(N, 32), 32>>>(d_spin, d_spinsum);
-        k_accum_scalar_moments<<<1, 1>>>(d_spinsum, d_m2sum, d_m4sum);
-      }
+      // accumulate magnetization
 
-      unsigned long long naccept;
-      cudaMemcpy(
-          &naccept,
-          d_naccept,
-          sizeof(unsigned long long),
-          cudaMemcpyDeviceToHost);
+      cudaMemset(d_spinsum, 0, nt * sizeof(int));
 
-      float m2sum, m4sum;
-      cudaMemcpy(&m2sum, d_m2sum, sizeof(float), cudaMemcpyDeviceToHost);
-      cudaMemcpy(&m4sum, d_m4sum, sizeof(float), cudaMemcpyDeviceToHost);
+      k_accum<<<dim3(ceil_div(N, 32), nt, 1), dim3(32, 1, 1)>>>(
+          nt, d_spin, d_spinsum);
 
-      clock_t end_time = clock();
+      k_accum_scalar_moments<<<ceil_div(nt, 32), 32>>>(
+          nt, d_spinsum, d_m2sum, d_m4sum);
+    }
 
+    std::vector<unsigned long long> naccept(nt);
+    cudaMemcpy(
+        naccept.data(),
+        d_naccept,
+        nt * sizeof(unsigned long long),
+        cudaMemcpyDeviceToHost);
+
+    std::vector<float> m2sum(nt), m4sum(nt);
+    cudaMemcpy(
+        m2sum.data(), d_m2sum, nt * sizeof(float), cudaMemcpyDeviceToHost);
+    cudaMemcpy(
+        m4sum.data(), d_m4sum, nt * sizeof(float), cudaMemcpyDeviceToHost);
+
+    clock_t end_time = clock();
+
+    const double time_s = (double)(end_time - start_time) / CLOCKS_PER_SEC;
+
+    for (int t = 0; t < nt; ++t) {
       const double accept_rate =
-          (double)naccept / (double)sweeps_per_sample / L_ / L_;
-      const double m2avg = m2sum / (double)sweeps_per_sample;
-      const double m4avg = m4sum / (double)sweeps_per_sample;
-      const double time_s = (double)(end_time - start_time) / CLOCKS_PER_SEC;
+          (double)naccept[t] / (double)sweeps_per_sample / L_ / L_;
+      const double m2avg = m2sum[t] / (double)sweeps_per_sample;
+      const double m4avg = m4sum[t] / (double)sweeps_per_sample;
 
       printf(
           "%u,%lu,%g,%ld,%ld,%g,%d,%g,%g,%g,%g\n",
@@ -282,7 +323,7 @@ auto main(int argc, char *argv[]) -> int {
           hext,
           sweeps_per_sample,
           seed,
-          temperature,
+          temps[t],
           isample,
           accept_rate,
           m2avg,
@@ -291,6 +332,7 @@ auto main(int argc, char *argv[]) -> int {
     }
   }
 
+  cudaFree(d_temps);
   cudaFree(d_spin);
   cudaFree(d_noise);
   cudaFree(d_naccept);

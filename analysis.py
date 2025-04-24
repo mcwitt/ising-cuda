@@ -173,8 +173,8 @@ argss = [
     (impl, grid_size, sweeps_per_sample, temperatures_, n_samples, seed)
     # for CPU, run each temperature in separate process for parallelism
     for impl, grid_sizes_, temperature_batches in [
-        ("cpu", [8, 12, 16, 24, 32], [[t] for t in temperatures]),
-        ("gpu", [24, 32], [temperatures]),
+        ("cpu", [8, 12, 16, 24, 32, 48, 64], [[t] for t in temperatures]),
+        ("gpu", [24, 32, 48, 64, 96, 128], [temperatures]),
     ]
     for grid_size in grid_sizes_
     for temperatures_ in temperature_batches
@@ -256,6 +256,20 @@ sns.FacetGrid(bs_samples.reset_index(), col="impl").map_dataframe(
 ).map(lambda *args, **kwargs: plt.axvline(2.269, color="gray", ls="--")).add_legend()
 
 # %%
-sns.lineplot(data.reset_index(), x="L", y="time_s", hue="impl", marker="o").set(
+df = data.pipe(
+    lambda df: df.join(
+        df.groupby(["impl", "L", "sweeps_per_sample", "seed", "sample"])
+        .size()
+        .rename("n_temps")
+    )
+    .reset_index()
+    .assign(
+        sweep_time_s=lambda df: df["time_s"] / df["sweeps_per_sample"],
+        sweep_time_per_temp_s=lambda df: np.where(
+            df["impl"] == "gpu", df["sweep_time_s"] / df["n_temps"], df["sweep_time_s"]
+        ),
+    )
+)
+sns.lineplot(df, x="L", y="sweep_time_per_temp_s", hue="impl", marker="o").set(
     xscale="log", yscale="log"
 )
