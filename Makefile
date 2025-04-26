@@ -20,7 +20,7 @@ endif
 CFLAGS := $(COMMON_FLAGS)
 NVCCFLAGS := $(COMMON_FLAGS)
 
-TARGETS := ising2d_cpu ising2d_gpu isingnd_cpu
+TARGETS := ising2d_cpu ising2d_gpu isingnd_cpu isingnd_gpu
 
 .PHONY: all clean
 
@@ -34,6 +34,9 @@ ising2d_gpu: ising2d.cu
 
 isingnd_cpu: isingnd.cpp
 	$(CC) -DD=$(D) $(CFLAGS) $< $(CPU_LIBS) -o $@
+
+isingnd_gpu: isingnd.cu
+	$(NVCC) -DD=$(D) -DL=$(L) $(NVCCFLAGS) --expt-relaxed-constexpr $< $(GPU_LIBS) -o $@
 
 clean:
 	rm -f $(TARGETS)
