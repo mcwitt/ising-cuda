@@ -36,7 +36,6 @@
 
           hooks = {
             clang-format.enable = true;
-
             clang-tidy = {
               enable = true;
               types_or = [
@@ -45,7 +44,7 @@
                 "cuda"
               ];
             };
-
+            cmake-format.enable = true;
             nixfmt-rfc-style.enable = true;
             ruff.enable = true;
             ruff-format.enable = true;
