@@ -50,12 +50,14 @@
             let
               python = pkgs.python3.withPackages (
                 ps: with ps; [
+                  diskcache
                   ipywidgets
                   ising-mcmc
                   jupytext
                   notebook
                   pip
                   seaborn
+                  tqdm
                 ]
               );
             in
@@ -63,6 +65,9 @@
               pkgs.clang-tools
               pkgs.gdb
 
+              pkgs.cudaPackages.cuda_cudart
+              pkgs.cudaPackages.cuda_nvcc
+              pkgs.cudaPackages.libcurand
               pkgs.cudaPackages.cuda_sanitizer_api
 
               pkgs.basedpyright
