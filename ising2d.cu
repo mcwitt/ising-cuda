@@ -11,16 +11,8 @@ constexpr unsigned int D_ = 2;
 
 constexpr unsigned int WARP_SIZE = 32;
 
-#ifdef L
-constexpr unsigned long L_ = L;
-#else
-constexpr unsigned long L_ = 64;
-#endif
-
-constexpr unsigned long N = L_ * L_;
-
 __global__ void k_init_random(
-    const size_t n,
+    const unsigned int n,
     const float *const __restrict__ noise,
     int *const __restrict__ spin) {
   const unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -84,6 +76,7 @@ template <typename T> __device__ void k_accum_block_sum(int &val, T *out) {
 
 __global__ void k_sweep(
     const unsigned int parity,
+    const unsigned int l,
     const float hext,
     const size_t nt,
     const float *temps,
@@ -98,27 +91,27 @@ __global__ void k_sweep(
   assert(blockDim.z == 1);
   const unsigned int t = blockIdx.z;
 
-  if (t >= nt || i >= L_ || j >= L_)
+  if (t >= nt || i >= l || j >= l)
     return;
 
   int local_naccept = 0;
 
   if ((i + j) % 2 == parity) {
 
-    const unsigned int iprev = (i == 0) ? L_ - 1 : i - 1;
-    const unsigned int jprev = (j == 0) ? L_ - 1 : j - 1;
+    const unsigned int iprev = (i == 0) ? l - 1 : i - 1;
+    const unsigned int jprev = (j == 0) ? l - 1 : j - 1;
 
-    const unsigned int inext = (i == L_ - 1) ? 0 : i + 1;
-    const unsigned int jnext = (j == L_ - 1) ? 0 : j + 1;
+    const unsigned int inext = (i == l - 1) ? 0 : i + 1;
+    const unsigned int jnext = (j == l - 1) ? 0 : j + 1;
 
-    const unsigned int offset = t * N;
+    const unsigned int offset = t * l * l;
 
     const int nbrsum =
-        spin[offset + i * L_ + jprev] + spin[offset + i * L_ + jnext] +
-        spin[offset + iprev * L_ + j] + spin[offset + inext * L_ + j];
+        spin[offset + i * l + jprev] + spin[offset + i * l + jnext] +
+        spin[offset + iprev * l + j] + spin[offset + inext * l + j];
 
     const float h = static_cast<float>(nbrsum) + hext;
-    const unsigned int idx = offset + i * L_ + j;
+    const unsigned int idx = offset + i * l + j;
     const int s = spin[idx];
     const float de = static_cast<float>(2 * s) * h;
 
@@ -140,6 +133,7 @@ __global__ void k_sweep(
 
 template <typename T>
 __global__ void k_accum(
+    const unsigned int n,
     const size_t nt,
     const T *const __restrict__ vals,
     T *const __restrict__ out) {
@@ -147,10 +141,10 @@ __global__ void k_accum(
   const unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
   const unsigned int t = blockIdx.y * blockDim.y + threadIdx.y;
 
-  if (t >= nt || i >= N)
+  if (t >= nt || i >= n)
     return;
 
-  int local_sum = vals[t * N + i];
+  int local_sum = vals[t * n + i];
 
   k_accum_block_sum(local_sum, &out[t]);
 }
@@ -178,19 +172,23 @@ auto parse_long(const char *s) -> long {
 void parse_args(
     int argc,
     char *argv[],
+    unsigned int *l,
     float *hext,
-    long *n_samples,
-    long *sweeps_per_sample,
+    unsigned long *n_samples,
+    unsigned long *sweeps_per_sample,
     unsigned long *seed) {
-  if (argc != 5) {
+  if (argc != 6) {
     fprintf(
-        stderr, "Usage: %s H_EXT N_SAMPLES SWEEPS_PER_SAMPLE SEED\n", argv[0]);
+        stderr,
+        "Usage: %s L H_EXT N_SAMPLES SWEEPS_PER_SAMPLE SEED\n",
+        argv[0]);
     exit(1);
   }
-  *hext = parse_float(argv[1]);
-  *n_samples = parse_long(argv[2]);
-  *sweeps_per_sample = parse_long(argv[3]);
-  *seed = parse_long(argv[4]);
+  *l = parse_long(argv[1]);
+  *hext = parse_float(argv[2]);
+  *n_samples = parse_long(argv[3]);
+  *sweeps_per_sample = parse_long(argv[4]);
+  *seed = parse_long(argv[5]);
 }
 
 auto read_floats() -> std::vector<float> {
@@ -205,11 +203,14 @@ auto read_floats() -> std::vector<float> {
 }
 
 auto main(int argc, char *argv[]) -> int {
+  unsigned int l;
   float hext;
-  long n_samples;
-  long sweeps_per_sample;
+  unsigned long n_samples;
+  unsigned long sweeps_per_sample;
   unsigned long seed;
-  parse_args(argc, argv, &hext, &n_samples, &sweeps_per_sample, &seed);
+  parse_args(argc, argv, &l, &hext, &n_samples, &sweeps_per_sample, &seed);
+
+  const unsigned int n = l * l;
 
   const std::vector<float> temps = read_floats();
   const size_t nt = temps.size();
@@ -220,8 +221,8 @@ auto main(int argc, char *argv[]) -> int {
   unsigned long long *d_naccept;
   int *d_spinsum;
 
-  cudaMalloc(&d_spin, nt * N * sizeof(int));
-  cudaMalloc(&d_noise, nt * N * sizeof(float));
+  cudaMalloc(&d_spin, nt * n * sizeof(int));
+  cudaMalloc(&d_noise, nt * n * sizeof(float));
 
   cudaMalloc(&d_temps, nt * sizeof(float));
   cudaMalloc(&d_naccept, nt * sizeof(unsigned long long));
@@ -232,9 +233,9 @@ auto main(int argc, char *argv[]) -> int {
   curandGenerator_t gen;
   curandCreateGenerator(&gen, CURAND_RNG_PSEUDO_DEFAULT);
   curandSetPseudoRandomGeneratorSeed(gen, seed);
-  curandGenerateUniform(gen, d_noise, nt * N);
+  curandGenerateUniform(gen, d_noise, nt * n);
 
-  k_init_random<<<ceil_div(nt * N, 256), 256>>>(nt * N, d_noise, d_spin);
+  k_init_random<<<ceil_div(nt * n, 256), 256>>>(nt * n, d_noise, d_spin);
 
   printf(
       "D,L,h_ext,sweeps_per_sample,seed,temperature,sample,accept_rate,"
@@ -248,33 +249,33 @@ auto main(int argc, char *argv[]) -> int {
     cudaMemset(d_naccept, 0, nt * sizeof(unsigned long long));
 
     for (int isweep = 0; isweep < sweeps_per_sample; ++isweep) {
-      curandGenerateUniform(gen, d_noise, nt * N);
+      curandGenerateUniform(gen, d_noise, nt * n);
 
       // checkerboard updates
 
       constexpr dim3 blockDim(16, 16);
       static_assert(blockDim.z == 1, "require blockDim.z == 1");
 
-      const dim3 gridDim(
-          ceil_div(L_, blockDim.x), ceil_div(L_, blockDim.y), nt);
+      const dim3 gridDim(ceil_div(l, blockDim.x), ceil_div(l, blockDim.y), nt);
 
       k_sweep<<<gridDim, blockDim>>>(
-          0, hext, nt, d_temps, d_noise, d_spin, d_naccept); // light squares
+          0, l, hext, nt, d_temps, d_noise, d_spin, d_naccept); // light squares
 
       k_sweep<<<gridDim, blockDim>>>(
-          1, hext, nt, d_temps, d_noise, d_spin, d_naccept); // dark squares
+          1, l, hext, nt, d_temps, d_noise, d_spin, d_naccept); // dark squares
 
       // accumulate magnetization
 
       cudaMemset(d_spinsum, 0, nt * sizeof(int));
 
-      k_accum<<<dim3(ceil_div(N, 256), nt), dim3(256)>>>(nt, d_spin, d_spinsum);
+      k_accum<<<dim3(ceil_div(n, 256), nt), dim3(256)>>>(
+          n, nt, d_spin, d_spinsum);
 
       std::vector<int> spinsum(nt);
       cudaMemcpy(
           spinsum.data(), d_spinsum, nt * sizeof(int), cudaMemcpyDeviceToHost);
       for (int t = 0; t < nt; ++t) {
-        double m = spinsum[t] / static_cast<double>(N);
+        double m = spinsum[t] / static_cast<double>(n);
         double m2 = m * m;
         double m4 = m2 * m2;
         m2sum[t] += m2;
@@ -295,14 +296,14 @@ auto main(int argc, char *argv[]) -> int {
 
     for (int t = 0; t < nt; ++t) {
       const double accept_rate = static_cast<double>(naccept[t]) /
-                                 static_cast<double>(sweeps_per_sample) / N;
+                                 static_cast<double>(sweeps_per_sample) / n;
       const double m2avg = m2sum[t] / static_cast<double>(sweeps_per_sample);
       const double m4avg = m4sum[t] / static_cast<double>(sweeps_per_sample);
 
       printf(
-          "%u,%lu,%g,%ld,%ld,%g,%d,%g,%g,%g,%g\n",
+          "%u,%u,%g,%ld,%ld,%g,%d,%g,%g,%g,%g\n",
           D_,
-          L_,
+          l,
           hext,
           sweeps_per_sample,
           seed,

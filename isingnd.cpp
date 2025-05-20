@@ -14,46 +14,42 @@ constexpr unsigned int D_ = 64;
 
 static_assert(D_ >= 1, "Require D >= 1");
 
-#ifdef L
-constexpr unsigned int L_ = L;
-#else
-constexpr unsigned int L_ = 64;
-#endif
-
-static_assert(L_ >= 3, "Require L >= 3");
-
-constexpr auto compute_strides() -> std::array<unsigned int, D_ + 1> {
+auto compute_strides(unsigned int l) -> std::array<unsigned int, D_ + 1> {
   std::array<unsigned int, D_ + 1> strides{};
   strides[0] = 1;
   for (int i = 1; i <= D_; ++i) {
-    strides[i] = strides[i - 1] * L_;
+    strides[i] = strides[i - 1] * l;
   }
   return strides;
 }
 
-constexpr auto strides = compute_strides();
-constexpr int N = strides[D_];
-
 void init_random(
-    gsl_rng *const __restrict__ rng, int *const __restrict__ spin) {
-  for (int i = 0; i < N; ++i) {
+    const unsigned int n,
+    gsl_rng *const __restrict__ rng,
+    int *const __restrict__ spin) {
+  for (int i = 0; i < n; ++i) {
     int p = (int)gsl_rng_uniform_int(rng, 2);
     spin[i] = 2 * p - 1;
   }
 };
 
 auto sweep(
+    const std::array<unsigned int, D_ + 1> &strides,
     const double hext,
     const double temperature,
     gsl_rng *const __restrict__ rng,
     int *const __restrict__ spin) -> unsigned long {
+
+  const unsigned int l = strides[1];
+  const unsigned int n = strides[D_];
+
   unsigned long naccept = 0;
 
-  int cprev[D_], ccurr[D_], cnext[D_];
+  unsigned int cprev[D_], ccurr[D_], cnext[D_];
 
   for (int d = 0; d < D_; ++d) {
-    cprev[d] = L_ - 2;
-    ccurr[d] = L_ - 1;
+    cprev[d] = l - 2;
+    ccurr[d] = l - 1;
     cnext[d] = 0;
   }
 
@@ -99,7 +95,7 @@ auto sweep(
       for (d = 0; d < D_; ++d) {
         cprev[d] = ccurr[d];
         ccurr[d] = cnext[d];
-        if (cnext[d] < L_ - 1) {
+        if (cnext[d] < l - 1) {
           cnext[d]++;
           break;
         }
@@ -114,7 +110,7 @@ auto sweep(
   return naccept;
 }
 
-auto sum(int n, const int *const __restrict__ arr) -> int {
+auto sum(const unsigned int n, const int *const __restrict__ arr) -> int {
   int s = 0;
   for (int i = 0; i < n; ++i) {
     s += arr[i];
@@ -145,31 +141,40 @@ auto parse_long(const char *s) -> long {
 void parse_args(
     int argc,
     char *argv[],
+    unsigned int *l,
     float *hext,
-    long *n_samples,
-    long *sweeps_per_sample,
+    unsigned long *n_samples,
+    unsigned long *sweeps_per_sample,
     unsigned long *seed) {
-  if (argc != 5) {
+  if (argc != 6) {
     fprintf(
-        stderr, "Usage: %s H_EXT N_SAMPLES SWEEPS_PER_SAMPLE SEED\n", argv[0]);
+        stderr,
+        "Usage: %s L H_EXT N_SAMPLES SWEEPS_PER_SAMPLE SEED\n",
+        argv[0]);
     exit(1);
   }
-  *hext = parse_float(argv[1]);
-  *n_samples = parse_long(argv[2]);
-  *sweeps_per_sample = parse_long(argv[3]);
-  *seed = parse_long(argv[4]);
+  *l = parse_long(argv[1]);
+  *hext = parse_float(argv[2]);
+  *n_samples = parse_long(argv[3]);
+  *sweeps_per_sample = parse_long(argv[4]);
+  *seed = parse_long(argv[5]);
 }
 
 auto main(int argc, char *argv[]) -> int {
-  int *spin = static_cast<int *>(malloc(N * sizeof(int)));
+  unsigned int l;
   float hext = NAN;
   float temperature = NAN;
-  long n_samples = 0;
-  long sweeps_per_sample = 0;
+  unsigned long n_samples = 0;
+  unsigned long sweeps_per_sample = 0;
   unsigned long seed = 0;
   gsl_rng *rng = nullptr;
 
-  parse_args(argc, argv, &hext, &n_samples, &sweeps_per_sample, &seed);
+  parse_args(argc, argv, &l, &hext, &n_samples, &sweeps_per_sample, &seed);
+
+  auto strides = compute_strides(l);
+  const unsigned int n = strides[D_];
+
+  int *spin = static_cast<int *>(malloc(n * sizeof(int)));
 
   gsl_rng_env_setup();
   rng = gsl_rng_alloc(gsl_rng_mt19937);
@@ -181,7 +186,7 @@ auto main(int argc, char *argv[]) -> int {
 
   while (scanf("%f", &temperature) == 1) {
 
-    init_random(rng, spin);
+    init_random(n, rng, spin);
 
     for (int isample = 0; isample < n_samples; ++isample) {
       unsigned long naccept = 0;
@@ -192,10 +197,10 @@ auto main(int argc, char *argv[]) -> int {
       const clock_t start_time = clock();
 
       for (int isweep = 0; isweep < sweeps_per_sample; ++isweep) {
-        naccept += sweep(hext, temperature, rng, spin);
+        naccept += sweep(strides, hext, temperature, rng, spin);
 
-        const int spinsum = sum(L_ * L_, spin);
-        double m = (double)spinsum / L_ / L_;
+        const int spinsum = sum(n, spin);
+        double m = (double)spinsum / n;
         m2sum += m * m;
         m4sum += m * m * m * m;
       }
@@ -203,7 +208,7 @@ auto main(int argc, char *argv[]) -> int {
       const clock_t end_time = clock();
 
       const double accept_rate =
-          (double)naccept / (double)sweeps_per_sample / L_ / L_;
+          (double)naccept / (double)sweeps_per_sample / n;
       const double m2avg = m2sum / (double)sweeps_per_sample;
       const double m4avg = m4sum / (double)sweeps_per_sample;
       const double time_s = (double)(end_time - start_time) / CLOCKS_PER_SEC;
@@ -211,7 +216,7 @@ auto main(int argc, char *argv[]) -> int {
       printf(
           "%d,%d,%g,%ld,%ld,%g,%d,%g,%g,%g,%g\n",
           D_,
-          L_,
+          l,
           hext,
           sweeps_per_sample,
           seed,

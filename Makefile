@@ -1,5 +1,4 @@
 D ?= 2
-L ?= 16
 
 DEBUG ?= 0
 
@@ -9,12 +8,10 @@ NVCC := nvcc
 CPU_LIBS := -lm -lgsl -lgslcblas
 GPU_LIBS := -lcudart -lcurand
 
-COMMON_FLAGS := -DL=$(L)
-
 ifeq ($(DEBUG), 0)
-	COMMON_FLAGS += -O3 -DNDEBUG
+	COMMON_FLAGS := -O3 -DNDEBUG
 else
-	COMMON_FLAGS += -g -O0
+	COMMON_FLAGS := -g -O0
 endif
 
 CFLAGS := $(COMMON_FLAGS)
@@ -36,7 +33,7 @@ isingnd_cpu: isingnd.cpp
 	$(CC) -DD=$(D) $(CFLAGS) $< $(CPU_LIBS) -o $@
 
 isingnd_gpu: isingnd.cu
-	$(NVCC) -DD=$(D) -DL=$(L) $(NVCCFLAGS) --expt-relaxed-constexpr $< $(GPU_LIBS) -o $@
+	$(NVCC) -DD=$(D) $(NVCCFLAGS) --expt-relaxed-constexpr $< $(GPU_LIBS) -o $@
 
 clean:
 	rm -f $(TARGETS)

@@ -10,33 +10,26 @@
 
 constexpr unsigned int D_ = 2;
 
-#ifdef L
-constexpr unsigned long L_ = L;
-#else
-constexpr unsigned long L_ = 64;
-#endif
-
 constexpr unsigned int WARP_SIZE = 32;
 
-constexpr auto compute_strides() -> std::array<unsigned int, D_ + 1> {
+auto compute_strides(unsigned int l) -> std::array<unsigned int, D_ + 1> {
   std::array<unsigned int, D_ + 1> strides{};
   strides[0] = 1;
   for (int i = 1; i <= D_; ++i) {
-    strides[i] = strides[i - 1] * L_;
+    strides[i] = strides[i - 1] * l;
   }
   return strides;
 }
 
-constexpr __constant__ auto strides = compute_strides();
-constexpr int N = strides[D_];
+__constant__ unsigned int c_strides[D_ + 1];
 
 __global__ void k_init_random(
-    const size_t nt,
+    const unsigned int n,
     const float *const __restrict__ noise,
     int *const __restrict__ spin) {
   const unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
 
-  if (i >= nt * N)
+  if (i >= n)
     return;
 
   const int p = noise[i] < 0.5;
@@ -108,7 +101,9 @@ __global__ void k_sweep(
   assert(blockDim.z == 1);
   const unsigned int t = blockIdx.y;
 
-  if (t >= nt || i >= N)
+  const unsigned int n = c_strides[D_];
+
+  if (t >= nt || i >= n)
     return;
 
   int local_naccept = 0;
@@ -117,7 +112,7 @@ __global__ void k_sweep(
   unsigned int rem = i;
 
   for (int d = D_ - 1; d >= 0; d--) {
-    const unsigned int stride = strides[d];
+    const unsigned int stride = c_strides[d];
     ccurr[d] = rem / stride;
     rem %= stride;
   }
@@ -128,16 +123,17 @@ __global__ void k_sweep(
   }
 
   if (dist % 2 == parity) {
+    const unsigned int l = c_strides[1];
 
     unsigned int cprev[D_];
     unsigned int cnext[D_];
 
     for (int d = 0; d < D_; ++d) {
-      cprev[d] = (ccurr[d] == 0) ? L_ - 1 : ccurr[d] - 1;
-      cnext[d] = (ccurr[d] == L_ - 1) ? 0 : ccurr[d] + 1;
+      cprev[d] = (ccurr[d] == 0) ? l - 1 : ccurr[d] - 1;
+      cnext[d] = (ccurr[d] == l - 1) ? 0 : ccurr[d] + 1;
     }
 
-    const unsigned int offset = t * N;
+    const unsigned int offset = t * n;
 
     int nbrsum = 0;
     for (int d = 0; d < D_; ++d) {
@@ -146,8 +142,8 @@ __global__ void k_sweep(
 
       // compute indices of forward and reverse neighbors in dimension d
       for (int dp = 0; dp < D_; ++dp) {
-        iprev += strides[dp] * ((dp == d) ? cprev[dp] : ccurr[dp]);
-        inext += strides[dp] * ((dp == d) ? cnext[dp] : ccurr[dp]);
+        iprev += c_strides[dp] * ((dp == d) ? cprev[dp] : ccurr[dp]);
+        inext += c_strides[dp] * ((dp == d) ? cnext[dp] : ccurr[dp]);
       }
 
       nbrsum += spin[offset + iprev];
@@ -177,6 +173,7 @@ __global__ void k_sweep(
 
 template <typename T>
 __global__ void k_accum(
+    const unsigned int n,
     const size_t nt,
     const T *const __restrict__ vals,
     T *const __restrict__ out) {
@@ -184,10 +181,10 @@ __global__ void k_accum(
   const unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
   const unsigned int t = blockIdx.y * blockDim.y + threadIdx.y;
 
-  if (t >= nt || i >= N)
+  if (t >= nt || i >= n)
     return;
 
-  int local_sum = vals[t * N + i];
+  int local_sum = vals[t * n + i];
 
   k_accum_block_sum(local_sum, &out[t]);
 }
@@ -215,19 +212,23 @@ auto parse_long(const char *s) -> long {
 void parse_args(
     int argc,
     char *argv[],
+    unsigned int *l,
     float *hext,
-    long *n_samples,
-    long *sweeps_per_sample,
+    unsigned long *n_samples,
+    unsigned long *sweeps_per_sample,
     unsigned long *seed) {
-  if (argc != 5) {
+  if (argc != 6) {
     fprintf(
-        stderr, "Usage: %s H_EXT N_SAMPLES SWEEPS_PER_SAMPLE SEED\n", argv[0]);
+        stderr,
+        "Usage: %s L H_EXT N_SAMPLES SWEEPS_PER_SAMPLE SEED\n",
+        argv[0]);
     exit(1);
   }
-  *hext = parse_float(argv[1]);
-  *n_samples = parse_long(argv[2]);
-  *sweeps_per_sample = parse_long(argv[3]);
-  *seed = parse_long(argv[4]);
+  *l = parse_long(argv[1]);
+  *hext = parse_float(argv[2]);
+  *n_samples = parse_long(argv[3]);
+  *sweeps_per_sample = parse_long(argv[4]);
+  *seed = parse_long(argv[5]);
 }
 
 auto read_floats() -> std::vector<float> {
@@ -242,11 +243,15 @@ auto read_floats() -> std::vector<float> {
 }
 
 auto main(int argc, char *argv[]) -> int {
+  unsigned int l;
   float hext;
-  long n_samples;
-  long sweeps_per_sample;
+  unsigned long n_samples;
+  unsigned long sweeps_per_sample;
   unsigned long seed;
-  parse_args(argc, argv, &hext, &n_samples, &sweeps_per_sample, &seed);
+  parse_args(argc, argv, &l, &hext, &n_samples, &sweeps_per_sample, &seed);
+
+  auto strides = compute_strides(l);
+  const unsigned int n = strides[D_];
 
   const std::vector<float> temps = read_floats();
   const size_t nt = temps.size();
@@ -257,21 +262,24 @@ auto main(int argc, char *argv[]) -> int {
   unsigned long long *d_naccept;
   int *d_spinsum;
 
-  cudaMalloc(&d_spin, nt * N * sizeof(int));
-  cudaMalloc(&d_noise, nt * N * sizeof(float));
+  cudaMalloc(&d_spin, nt * n * sizeof(int));
+  cudaMalloc(&d_noise, nt * n * sizeof(float));
 
   cudaMalloc(&d_temps, nt * sizeof(float));
   cudaMalloc(&d_naccept, nt * sizeof(unsigned long long));
   cudaMalloc(&d_spinsum, nt * sizeof(int));
+
+  cudaMemcpyToSymbol(
+      c_strides, strides.data(), (D_ + 1) * sizeof(unsigned int));
 
   cudaMemcpy(d_temps, temps.data(), nt * sizeof(float), cudaMemcpyHostToDevice);
 
   curandGenerator_t gen;
   curandCreateGenerator(&gen, CURAND_RNG_PSEUDO_DEFAULT);
   curandSetPseudoRandomGeneratorSeed(gen, seed);
-  curandGenerateUniform(gen, d_noise, nt * N);
+  curandGenerateUniform(gen, d_noise, nt * n);
 
-  k_init_random<<<ceil_div(nt * N, 256), 256>>>(nt, d_noise, d_spin);
+  k_init_random<<<ceil_div(nt * n, 256), 256>>>(nt * n, d_noise, d_spin);
 
   printf(
       "D,L,h_ext,sweeps_per_sample,seed,temperature,sample,accept_rate,"
@@ -285,32 +293,45 @@ auto main(int argc, char *argv[]) -> int {
     cudaMemset(d_naccept, 0, nt * sizeof(unsigned long long));
 
     for (int isweep = 0; isweep < sweeps_per_sample; ++isweep) {
-      curandGenerateUniform(gen, d_noise, nt * N);
+      curandGenerateUniform(gen, d_noise, nt * n);
 
       // checkerboard updates
 
       constexpr dim3 blockDim(256);
-      dim3 gridDim(ceil_div(N, blockDim.x), ceil_div(nt, blockDim.z), 1);
+      dim3 gridDim(ceil_div(n, blockDim.x), ceil_div(nt, blockDim.z), 1);
 
       static_assert(blockDim.z == 1, "require blockDim.z == 1");
 
       k_sweep<<<gridDim, blockDim>>>(
-          0, hext, nt, d_temps, d_noise, d_spin, d_naccept); // light squares
+          0,
+          hext,
+          nt,
+          d_temps,
+          d_noise,
+          d_spin,
+          d_naccept); // light squares
 
       k_sweep<<<gridDim, blockDim>>>(
-          1, hext, nt, d_temps, d_noise, d_spin, d_naccept); // dark squares
+          1,
+          hext,
+          nt,
+          d_temps,
+          d_noise,
+          d_spin,
+          d_naccept); // dark squares
 
       // accumulate magnetization
 
       cudaMemset(d_spinsum, 0, nt * sizeof(int));
 
-      k_accum<<<dim3(ceil_div(N, 256), nt), dim3(256)>>>(nt, d_spin, d_spinsum);
+      k_accum<<<dim3(ceil_div(n, 256), nt), dim3(256)>>>(
+          n, nt, d_spin, d_spinsum);
 
       std::vector<int> spinsum(nt);
       cudaMemcpy(
           spinsum.data(), d_spinsum, nt * sizeof(int), cudaMemcpyDeviceToHost);
       for (int t = 0; t < nt; ++t) {
-        double m = spinsum[t] / static_cast<double>(N);
+        double m = spinsum[t] / static_cast<double>(n);
         double m2 = m * m;
         double m4 = m2 * m2;
         m2sum[t] += m2;
@@ -331,14 +352,14 @@ auto main(int argc, char *argv[]) -> int {
 
     for (int t = 0; t < nt; ++t) {
       const double accept_rate =
-          (double)naccept[t] / (double)sweeps_per_sample / N;
+          (double)naccept[t] / (double)sweeps_per_sample / n;
       const double m2avg = m2sum[t] / (double)sweeps_per_sample;
       const double m4avg = m4sum[t] / (double)sweeps_per_sample;
 
       printf(
-          "%u,%lu,%g,%ld,%ld,%g,%d,%g,%g,%g,%g\n",
+          "%u,%u,%g,%ld,%ld,%g,%d,%g,%g,%g,%g\n",
           D_,
-          L_,
+          l,
           hext,
           sweeps_per_sample,
           seed,
