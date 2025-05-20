@@ -42,14 +42,13 @@ def lock_context(lock: synchronize.Lock):
         lock.release()
 
 
-def compile_cpu(grid_size: int, lock: synchronize.Lock) -> Path:
-    exec_path = Path.cwd() / f"ising2d_cpu_{grid_size}"
+def compile_cpu(lock: synchronize.Lock) -> Path:
+    exec_path = Path.cwd() / "ising2d_cpu"
 
     with lock_context(lock):
         if not exec_path.exists():
             compile_cmd = [
                 "cc",
-                f"-DL={grid_size}",
                 "-O3",
                 "ising2d.c",
                 "-lm",
@@ -63,13 +62,12 @@ def compile_cpu(grid_size: int, lock: synchronize.Lock) -> Path:
     return exec_path
 
 
-def compile_gpu(grid_size: int, lock: synchronize.Lock) -> Path:
-    exec_path = Path.cwd() / f"ising2d_gpu_{grid_size}"
+def compile_gpu(lock: synchronize.Lock) -> Path:
+    exec_path = Path.cwd() / "ising2d_gpu"
 
     if not exec_path.exists():
         compile_cmd = [
             "nvcc",
-            f"-DL={grid_size}",
             "-O3",
             "ising2d.cu",
             "-lcudart",
@@ -85,25 +83,28 @@ def compile_gpu(grid_size: int, lock: synchronize.Lock) -> Path:
 
 def compile_(
     impl: Literal["cpu", "gpu"],
-    grid_size: int,
     lock: synchronize.Lock,
 ) -> Path:
     match impl:
         case "cpu":
-            return compile_cpu(grid_size, lock)
+            return compile_cpu(lock)
         case "gpu":
-            return compile_gpu(grid_size, lock)
+            return compile_gpu(lock)
 
 
 def get_output_path(
     impl: Literal["cpu", "gpu"],
     grid_size: int,
+    h_ext: float,
     sweeps_per_sample: int,
     temperatures: list[float],
+    n_samples: int,
     seed: int,
 ) -> Path:
     hash = hashlib.sha256(
-        str((grid_size, sweeps_per_sample, temperatures, seed)).encode()
+        str(
+            (grid_size, h_ext, sweeps_per_sample, temperatures, n_samples, seed)
+        ).encode()
     ).hexdigest()
     return Path(f"out_{impl}_{hash[:7]}").with_suffix(".csv")
 
@@ -111,6 +112,7 @@ def get_output_path(
 def compile_and_run(
     impl: Literal["cpu", "gpu"],
     grid_size: int,
+    h_ext: float,
     sweeps_per_sample: int,
     temperatures: list[float],
     n_samples: int,
@@ -118,14 +120,21 @@ def compile_and_run(
     lock: synchronize.Lock,
 ) -> Path:
     output_path = get_output_path(
-        impl, grid_size, sweeps_per_sample, temperatures, seed
+        impl, grid_size, h_ext, sweeps_per_sample, temperatures, n_samples, seed
     )
 
     if not output_path.exists():
-        exec_path = compile_(impl, grid_size, lock)
+        exec_path = compile_(impl, lock)
         with output_path.open("w") as fh:
             subprocess.run(
-                [exec_path, str(n_samples), str(sweeps_per_sample), str(seed)],
+                [
+                    exec_path,
+                    str(grid_size),
+                    str(h_ext),
+                    str(n_samples),
+                    str(sweeps_per_sample),
+                    str(seed),
+                ],
                 input="\n".join(str(t) for t in temperatures),
                 text=True,
                 stdout=fh,
@@ -138,6 +147,7 @@ def compile_and_run(
 def read_result(
     impl: Literal["cpu", "gpu"],
     grid_size: int,
+    h_ext: float,
     sweeps_per_sample: int,
     temperatures: list[float],
     n_samples: int,
@@ -145,7 +155,7 @@ def read_result(
     lock: synchronize.Lock,
 ) -> pd.DataFrame:
     output_path = compile_and_run(
-        impl, grid_size, sweeps_per_sample, temperatures, n_samples, seed, lock
+        impl, grid_size, h_ext, sweeps_per_sample, temperatures, n_samples, seed, lock
     )
     df = pd.read_csv(output_path)
     df["impl"] = impl
@@ -159,24 +169,25 @@ def read_result(
 lock = Lock()
 
 # %%
-pd.read_csv(compile_and_run("cpu", 16, 1_000, [2.2, 2.3], 5, 0, lock))
+pd.read_csv(compile_and_run("cpu", 16, 0.0, 1_000, [2.2, 2.3], 5, 0, lock))
 
 
 # %%
-pd.read_csv(compile_and_run("gpu", 16, 1_000, [2.2, 2.3], 5, 0, lock))
+pd.read_csv(compile_and_run("gpu", 16, 0.0, 1_000, [2.2, 2.3], 5, 0, lock))
 
 
 # %%
 temperatures: list[float] = np.linspace(2.0, 2.5, 16).tolist()
 
 argss = [
-    (impl, grid_size, sweeps_per_sample, temperatures_, n_samples, seed)
+    (impl, grid_size, h_ext, sweeps_per_sample, temperatures_, n_samples, seed)
     # for CPU, run each temperature in separate process for parallelism
     for impl, grid_sizes_, temperature_batches in [
         ("cpu", [8, 12, 16, 24, 32, 48, 64], [[t] for t in temperatures]),
         ("gpu", [24, 32, 48, 64, 96, 128], [temperatures]),
     ]
     for grid_size in grid_sizes_
+    for h_ext in [0.0]
     for temperatures_ in temperature_batches
     for sweeps_per_sample in [1_000]
     for n_samples in [200]
@@ -188,9 +199,9 @@ len(argss)
 
 # %%
 def run(args):
-    impl, grid_size, sweeps_per_sample, temperature, n_samples, seed = args
+    impl, grid_size, h_ext, sweeps_per_sample, temperature, n_samples, seed = args
     return read_result(
-        impl, grid_size, sweeps_per_sample, temperature, n_samples, seed, lock
+        impl, grid_size, h_ext, sweeps_per_sample, temperature, n_samples, seed, lock
     )
 
 
