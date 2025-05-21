@@ -1,24 +1,40 @@
+#include <cuda.h>
+#include <vector>
+
+auto compute_strides(unsigned int d, unsigned int l)
+    -> std::vector<unsigned int>;
+
+__global__ void k_sweep(
+    const unsigned int parity,
+    const unsigned int *const __restrict__ strides,
+    const float *const __restrict__ hext,
+    const size_t nt,
+    const float *const __restrict__ temps,
+    const float *const __restrict__ noise,
+    int *const __restrict__ spin,
+    unsigned long long *const __restrict__ naccept);
+
+using KSweepFunc = void (*)(
+    const unsigned int,
+    const unsigned int *const __restrict__,
+    const float *const __restrict__,
+    const size_t,
+    const float *const __restrict__,
+    const float *const __restrict__,
+    int *const __restrict__,
+    unsigned long long *const __restrict__);
+
+auto get_k_sweep_func(unsigned int ndim) -> KSweepFunc;
+
 constexpr __host__ __device__ auto ceil_div(unsigned int x, unsigned int y)
     -> unsigned int {
   return (x + y - 1) / y;
 }
 
-template <typename T> __device__ void k_accum_block_sum(int &val, T *out);
-
-__global__ void k_sweep(
-    const unsigned int parity,
-    const unsigned int l,
-    const float *hext,
-    const unsigned int nt,
-    const float *temps,
-    const float *__restrict__ noise,
-    int *const __restrict__ spin,
-    unsigned long long *const __restrict__ naccept);
-
 template <typename T> __device__ void k_accum_block_sum(int &val, T *out) {
 
-  /* Computes the sum of val for all threads in a block and
-    accumulates the result in out. */
+  /* Computes the sum of val for all threads in a block and stores the
+    result in out. */
 
   // 1. Compute sum of values in each warp
 
@@ -63,7 +79,7 @@ template <typename T> __device__ void k_accum_block_sum(int &val, T *out) {
 template <typename T>
 __global__ void k_accum(
     const unsigned int n,
-    const unsigned int nt,
+    const size_t nt,
     const T *const __restrict__ vals,
     T *const __restrict__ out) {
 

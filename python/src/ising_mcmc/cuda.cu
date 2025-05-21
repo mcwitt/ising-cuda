@@ -6,7 +6,7 @@
 #include <stdexcept>
 #include <vector>
 
-#include "twod.cuh"
+#include "hypercube.cuh"
 
 namespace nb = nanobind;
 
@@ -75,6 +75,11 @@ NB_MODULE(cuda, m) {
           }
         }
 
+        const unsigned int d = spin.ndim() - 1;
+        auto strides = compute_strides(d, l);
+        const unsigned int n = strides[d];
+
+        unsigned int *d_strides;
         int *d_spin;
         float *d_hext;
         float *d_noise;
@@ -82,35 +87,38 @@ NB_MODULE(cuda, m) {
         unsigned long long *d_naccept;
         int *d_spinsum;
 
-        cudaMalloc(&d_spin, nt * l * l * sizeof(int));
+        cudaMalloc(&d_strides, (d + 1) * sizeof(unsigned int));
         cudaMemcpy(
-            d_spin,
-            spin.data(),
-            nt * l * l * sizeof(int),
+            d_strides,
+            strides.data(),
+            (d + 1) * sizeof(unsigned int),
             cudaMemcpyHostToDevice);
 
-        cudaMalloc(&d_hext, nt * l * l * sizeof(float));
+        cudaMalloc(&d_spin, nt * n * sizeof(int));
+        cudaMemcpy(
+            d_spin, spin.data(), nt * n * sizeof(int), cudaMemcpyHostToDevice);
+
+        cudaMalloc(&d_hext, nt * n * sizeof(float));
         cudaMemcpy(
             d_hext,
             hext.data(),
-            nt * l * l * sizeof(float),
+            nt * n * sizeof(float),
             cudaMemcpyHostToDevice);
 
         cudaMalloc(&d_temps, nt * sizeof(float));
         cudaMemcpy(
             d_temps, temps.data(), nt * sizeof(float), cudaMemcpyHostToDevice);
 
-        cudaMalloc(&d_noise, nt * l * l * sizeof(float));
+        cudaMalloc(&d_noise, nt * n * sizeof(float));
         cudaMalloc(&d_naccept, nt * sizeof(unsigned long long));
         cudaMalloc(&d_spinsum, nt * sizeof(int));
 
-        constexpr dim3 blockDim(16, 16);
-        dim3 gridDim(ceil_div(l, blockDim.x), ceil_div(l, blockDim.y), nt);
+        constexpr dim3 blockDim(256);
+        dim3 gridDim(ceil_div(n, blockDim.x), nt);
 
         curandGenerator_t gen;
         curandCreateGenerator(&gen, CURAND_RNG_PSEUDO_DEFAULT);
         curandSetPseudoRandomGeneratorSeed(gen, seed);
-        curandGenerateUniform(gen, d_noise, nt * l * l);
 
         std::vector<double> m2sum(nt);
         std::vector<double> m4sum(nt);
@@ -118,15 +126,16 @@ NB_MODULE(cuda, m) {
         cudaMemset(d_naccept, 0, nt * sizeof(unsigned long long));
 
         for (auto isweep = 0u; isweep < n_sweeps; ++isweep) {
-          curandGenerateUniform(gen, d_noise, nt * l * l);
+          const KSweepFunc k_sweep_d = get_k_sweep_func(d);
+          curandGenerateUniform(gen, d_noise, nt * n);
 
           // checkerboard updates
 
           static_assert(blockDim.z == 1, "require blockDim.z == 1");
 
-          k_sweep<<<gridDim, blockDim>>>(
+          k_sweep_d<<<gridDim, blockDim>>>(
               0,
-              l,
+              d_strides,
               d_hext,
               nt,
               d_temps,
@@ -134,9 +143,9 @@ NB_MODULE(cuda, m) {
               d_spin,
               d_naccept); // light squares
 
-          k_sweep<<<gridDim, blockDim>>>(
+          k_sweep_d<<<gridDim, blockDim>>>(
               1,
-              l,
+              d_strides,
               d_hext,
               nt,
               d_temps,
@@ -148,8 +157,8 @@ NB_MODULE(cuda, m) {
 
           cudaMemset(d_spinsum, 0, nt * sizeof(int));
 
-          k_accum<<<dim3(ceil_div(l * l, 256), nt), dim3(256)>>>(
-              l * l, nt, d_spin, d_spinsum);
+          k_accum<<<dim3(ceil_div(n, 256), nt), dim3(256)>>>(
+              n, nt, d_spin, d_spinsum);
 
           std::vector<int> spinsum(nt);
           cudaMemcpy(
@@ -158,19 +167,17 @@ NB_MODULE(cuda, m) {
               nt * sizeof(int),
               cudaMemcpyDeviceToHost);
           for (auto t = 0u; t < nt; ++t) {
-            double m = spinsum[t] / static_cast<double>(l * l);
+            double m = spinsum[t] / static_cast<double>(n);
             double m2 = m * m;
             double m4 = m2 * m2;
             m2sum[t] += m2;
             m4sum[t] += m4;
           }
         }
-        std::vector<int> spin_(nt * l * l);
+
+        std::vector<int> spin_(nt * n);
         cudaMemcpy(
-            spin_.data(),
-            d_spin,
-            nt * l * l * sizeof(int),
-            cudaMemcpyDeviceToHost);
+            spin_.data(), d_spin, nt * n * sizeof(int), cudaMemcpyDeviceToHost);
 
         std::vector<unsigned long long> naccept(nt);
         cudaMemcpy(
@@ -181,13 +188,15 @@ NB_MODULE(cuda, m) {
 
         std::vector<double> acceptrate(nt);
         for (auto t = 0u; t < nt; ++t) {
-          acceptrate[t] = static_cast<double>(naccept[t]) / n_sweeps / l / l;
+          acceptrate[t] = static_cast<double>(naccept[t]) / n_sweeps / n;
           m2sum[t] /= n_sweeps;
           m4sum[t] /= n_sweeps;
         }
 
+        cudaFree(d_strides);
         cudaFree(d_temps);
         cudaFree(d_spin);
+        cudaFree(d_hext);
         cudaFree(d_noise);
         cudaFree(d_naccept);
         cudaFree(d_spinsum);
@@ -198,8 +207,12 @@ NB_MODULE(cuda, m) {
           throw std::runtime_error(cudaGetErrorString(err));
         }
 
+        std::vector<std::size_t> shape(d + 1, l);
+        shape[0] = nt;
+
         return std::make_tuple(
-            nb::ndarray<nb::numpy, int, nb::ndim<3>>(spin_.data(), {nt, l, l})
+            nb::ndarray<nb::numpy, int, nb::ndim<2>>(
+                spin_.data(), d + 1, shape.data(), {})
                 .cast(),
             nb::ndarray<nb::numpy, double, nb::ndim<1>>(acceptrate.data(), {nt})
                 .cast(),
