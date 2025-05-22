@@ -1,14 +1,98 @@
-#include <curand.h>
 #include <format>
+#include <vector>
+
+#include <curand.h>
 #include <nanobind/nanobind.h>
 #include <nanobind/ndarray.h>
 #include <nanobind/stl/tuple.h>
-#include <stdexcept>
-#include <vector>
 
 #include "hypercube.cuh"
+#include "kernel_utils.cuh"
+#include "twod.cuh"
 
 namespace nb = nanobind;
+
+auto compute_strides(const unsigned int d, const unsigned int l)
+    -> std::vector<unsigned int> {
+  std::vector<unsigned int> strides(d + 1);
+  strides[0] = 1;
+  for (auto i = 1u; i <= d; ++i) {
+    strides[i] = strides[i - 1] * l;
+  }
+  return strides;
+}
+
+template <typename T>
+__global__ void k_accum(
+    const unsigned int n,
+    const size_t nt,
+    const T *const __restrict__ vals,
+    T *const __restrict__ out) {
+
+  const unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+  const unsigned int t = blockIdx.y * blockDim.y + threadIdx.y;
+
+  if (t >= nt || i >= n)
+    return;
+
+  int local_sum = vals[t * n + i];
+
+  k_accum_block_sum(local_sum, &out[t]);
+}
+
+using SweepKernel = void (*)(
+    const unsigned int,
+    const unsigned int *const __restrict__,
+    const float *const __restrict__,
+    const size_t,
+    const float *const __restrict__,
+    const float *const __restrict__,
+    int *const __restrict__,
+    unsigned long long *const __restrict__);
+
+auto get_hypercube_sweep_kernel(const unsigned int d) -> SweepKernel {
+  switch (d) {
+  case 1:
+    return k_sweep_hypercube<1>;
+  case 2:
+    return k_sweep_hypercube<2>;
+  case 3:
+    return k_sweep_hypercube<3>;
+  case 4:
+    return k_sweep_hypercube<4>;
+  case 5:
+    return k_sweep_hypercube<5>;
+  case 6:
+    return k_sweep_hypercube<6>;
+  case 7:
+    return k_sweep_hypercube<7>;
+  case 8:
+    return k_sweep_hypercube<8>;
+  case 9:
+    return k_sweep_hypercube<9>;
+  case 10:
+    return k_sweep_hypercube<10>;
+  default:
+    throw std::invalid_argument(
+        std::format(
+            "number of dimensions must be between 1 and 10, but got {}", d));
+  }
+}
+
+auto get_sweep_kernel_and_launch_params(
+    const unsigned int nt,
+    const unsigned int d,
+    const unsigned int l,
+    const unsigned int n) -> std::tuple<SweepKernel, dim3, dim3> {
+  switch (d) {
+  case 2:
+    return std::make_tuple(
+        k_sweep_2d, dim3(16, 16), dim3(ceil_div(l, 16), ceil_div(l, 16), nt));
+  default:
+    return std::make_tuple(
+        get_hypercube_sweep_kernel(d), dim3(256), dim3(ceil_div(n, 256), nt));
+  }
+}
 
 NB_MODULE(cuda, m) {
   m.def(
@@ -113,8 +197,8 @@ NB_MODULE(cuda, m) {
         cudaMalloc(&d_naccept, nt * sizeof(unsigned long long));
         cudaMalloc(&d_spinsum, nt * sizeof(int));
 
-        constexpr dim3 blockDim(256);
-        dim3 gridDim(ceil_div(n, blockDim.x), nt);
+        auto [k_sweep, block_dim, grid_dim] =
+            get_sweep_kernel_and_launch_params(nt, d, l, n);
 
         curandGenerator_t gen;
         curandCreateGenerator(&gen, CURAND_RNG_PSEUDO_DEFAULT);
@@ -126,14 +210,11 @@ NB_MODULE(cuda, m) {
         cudaMemset(d_naccept, 0, nt * sizeof(unsigned long long));
 
         for (auto isweep = 0u; isweep < n_sweeps; ++isweep) {
-          const KSweepFunc k_sweep_d = get_k_sweep_func(d);
           curandGenerateUniform(gen, d_noise, nt * n);
 
           // checkerboard updates
 
-          static_assert(blockDim.z == 1, "require blockDim.z == 1");
-
-          k_sweep_d<<<gridDim, blockDim>>>(
+          k_sweep<<<grid_dim, block_dim>>>(
               0,
               d_strides,
               d_hext,
@@ -143,7 +224,7 @@ NB_MODULE(cuda, m) {
               d_spin,
               d_naccept); // light squares
 
-          k_sweep_d<<<gridDim, blockDim>>>(
+          k_sweep<<<grid_dim, block_dim>>>(
               1,
               d_strides,
               d_hext,
