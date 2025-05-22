@@ -1,10 +1,7 @@
-#include <cuda.h>
-#include <vector>
+#include "kernel_utils.cuh"
 
-auto compute_strides(unsigned int d, unsigned int l)
-    -> std::vector<unsigned int>;
-
-__global__ void k_sweep(
+template <std::size_t D>
+__global__ void k_sweep_hypercube(
     const unsigned int parity,
     const unsigned int *const __restrict__ strides,
     const float *const __restrict__ hext,
@@ -12,91 +9,77 @@ __global__ void k_sweep(
     const float *const __restrict__ temps,
     const float *const __restrict__ noise,
     int *const __restrict__ spin,
-    unsigned long long *const __restrict__ naccept);
-
-using KSweepFunc = void (*)(
-    const unsigned int,
-    const unsigned int *const __restrict__,
-    const float *const __restrict__,
-    const size_t,
-    const float *const __restrict__,
-    const float *const __restrict__,
-    int *const __restrict__,
-    unsigned long long *const __restrict__);
-
-auto get_k_sweep_func(unsigned int ndim) -> KSweepFunc;
-
-constexpr __host__ __device__ auto ceil_div(unsigned int x, unsigned int y)
-    -> unsigned int {
-  return (x + y - 1) / y;
-}
-
-template <typename T> __device__ void k_accum_block_sum(int &val, T *out) {
-
-  /* Computes the sum of val for all threads in a block and stores the
-    result in out. */
-
-  // 1. Compute sum of values in each warp
-
-  for (int offset = warpSize / 2; offset > 0; offset /= 2) {
-    val += __shfl_down_sync(0xFFFFFFFF, val, offset);
-  }
-
-  // At this point, the first thread in each warp ("warp leader") has
-  // for its value the sum of the values over the warp.
-
-  // 2. Warp leaders store warp sums in shared memory
-
-  __shared__ int warp_sums[32];
-
-  const unsigned int tid = threadIdx.x + threadIdx.y * blockDim.x;
-
-  if (tid % warpSize == 0) {
-    warp_sums[tid / warpSize] = val;
-  }
-
-  // 3. Threads in first warp reduce warp sums
-
-  __syncthreads(); // ensure all threads see the final value of warp_sums
-
-  const unsigned int tpb = blockDim.x * blockDim.y;
-  const unsigned int nwarps = ceil_div(tpb, warpSize);
-
-  if (tid < warpSize) {
-    val = (tid < nwarps) ? warp_sums[tid] : 0;
-
-    for (int offset = warpSize / 2; offset > 0; offset /= 2) {
-      val += __shfl_down_sync(0xFFFFFFFF, val, offset);
-    }
-
-    // First warp leader updates out
-    if (tid == 0) {
-      atomicAdd(out, val);
-    }
-  }
-}
-
-template <typename T>
-__global__ void k_accum(
-    const unsigned int n,
-    const size_t nt,
-    const T *const __restrict__ vals,
-    T *const __restrict__ out) {
+    unsigned long long *const __restrict__ naccept) {
 
   const unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
   const unsigned int t = blockIdx.y * blockDim.y + threadIdx.y;
 
+  const unsigned int n = strides[D];
+
   if (t >= nt || i >= n)
     return;
 
-  int local_sum = vals[t * n + i];
+  int local_naccept = 0;
 
-  k_accum_block_sum(local_sum, &out[t]);
+  unsigned int ccurr[D];
+  unsigned int rem = i;
+
+  for (int d = D - 1; d >= 0; d--) {
+    const unsigned int stride = strides[d];
+    ccurr[d] = rem / stride;
+    rem %= stride;
+  }
+
+  unsigned int dist = 0;
+  for (unsigned int k : ccurr) {
+    dist += k;
+  }
+
+  if (dist % 2 == parity) {
+    const unsigned int l = strides[1];
+
+    unsigned int cprev[D];
+    unsigned int cnext[D];
+
+    for (int d = 0; d < D; ++d) {
+      cprev[d] = (ccurr[d] == 0) ? l - 1 : ccurr[d] - 1;
+      cnext[d] = (ccurr[d] == l - 1) ? 0 : ccurr[d] + 1;
+    }
+
+    const unsigned int offset = t * n;
+
+    int nbrsum = 0;
+    for (int d = 0; d < D; ++d) {
+      unsigned int iprev = 0;
+      unsigned int inext = 0;
+
+      // compute indices of forward and reverse neighbors in dimension d
+      for (int dp = 0; dp < D; ++dp) {
+        iprev += strides[dp] * ((dp == d) ? cprev[dp] : ccurr[dp]);
+        inext += strides[dp] * ((dp == d) ? cnext[dp] : ccurr[dp]);
+      }
+
+      nbrsum += spin[offset + iprev];
+      nbrsum += spin[offset + inext];
+    }
+
+    const unsigned int idx = offset + i;
+    const int s = spin[idx];
+    const float h = (float)nbrsum + hext[idx];
+    const float de = 2.0f * (float)s * h;
+
+    if (de <= 0) {
+      spin[idx] = -s;
+      local_naccept = 1;
+    } else {
+      const float temp = temps[t];
+      const float prob = exp(-static_cast<float>(de) / temp);
+      if (noise[idx] < prob) {
+        spin[idx] = -s;
+        local_naccept = 1;
+      }
+    }
+  }
+
+  k_accum_block_sum(local_naccept, &naccept[t]);
 }
-
-__global__ void k_accum_scalar_moments(
-    const unsigned int n,
-    const size_t nt,
-    const int *const __restrict__ sum,
-    float *const __restrict__ m2sum,
-    float *const __restrict__ m4sum);
