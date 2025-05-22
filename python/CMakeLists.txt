@@ -27,7 +27,7 @@ set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -O3")
 
 nanobind_add_module(cuda
   src/ising_mcmc/cuda.cu
-  src/ising_mcmc/hypercube.cu
+  src/ising_mcmc/twod.cu
 )
 
 target_link_libraries(cuda PRIVATE -lcurand)
