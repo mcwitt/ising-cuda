@@ -21,7 +21,7 @@ import matplotlib.pyplot as plt
 # %%
 import numpy as np
 
-from ising_mcmc import cuda
+from ising_mcmc.cuda.fm import sweeps
 
 # %%
 rng = np.random.default_rng(0)
@@ -49,7 +49,7 @@ for s_t, ax in zip(spin, axs):
     ax.set_yticks([])
 
 # %%
-spin_, accept_rate, m2avg, m4avg = cuda.sweeps(spin, hext, temps, 10_000, 0)
+spin_, accept_rate, m2avg, m4avg = sweeps(spin, hext, temps, 10_000, 0)
 
 # %%
 _, axs = plt.subplots(1, 3, figsize=(10, 3))
