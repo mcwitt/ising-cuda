@@ -1,7 +1,7 @@
+#include "fm_2d.cuh"
 #include "kernel_utils.cuh"
-#include "twod.cuh"
 
-__global__ void k_sweep_2d(
+__global__ void ising_mcmc::cuda::fm::k_sweep_2d(
     const unsigned int parity,
     const unsigned int *const __restrict__ d_strides,
     const float *hext,

@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from ising_mcmc.cuda import sweeps
+from ising_mcmc.cuda.fm import sweeps
 
 
 @pytest.mark.parametrize("nt", [1, 8])
