@@ -1,3 +1,5 @@
+namespace ising_mcmc::cuda::fm {
+
 __global__ void k_sweep_2d(
     const unsigned int parity,
     const unsigned int *const __restrict__ d_strides,
@@ -7,3 +9,5 @@ __global__ void k_sweep_2d(
     const float *__restrict__ noise,
     int *const __restrict__ spin,
     unsigned long long *const __restrict__ naccept);
+
+}

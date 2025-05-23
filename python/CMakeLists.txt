@@ -29,7 +29,8 @@ set(CMAKE_CUDA_FLAGS_RELEASE "${CMAKE_CUDA_FLAGS} -O3")
 set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS} -g")
 set(CMAKE_CUDA_FLAGS_DEBUG "${CMAKE_CUDA_FLAGS} -g -lineinfo")
 
-nanobind_add_module(cuda src/ising_mcmc/cuda.cu src/ising_mcmc/twod.cu)
+nanobind_add_module(cuda src/ising_mcmc/cuda.cu src/ising_mcmc/cuda/fm.cu
+                    src/ising_mcmc/cuda/fm_2d.cu)
 
 # add project root to the include path
 target_include_directories(cuda

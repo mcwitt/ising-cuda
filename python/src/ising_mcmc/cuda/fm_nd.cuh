@@ -1,7 +1,9 @@
 #include "kernel_utils.cuh"
 
+namespace ising_mcmc::cuda::fm {
+
 template <std::size_t D>
-__global__ void k_sweep_hypercube(
+__global__ void k_sweep_nd(
     const unsigned int parity,
     const unsigned int *const __restrict__ strides,
     const float *const __restrict__ hext,
@@ -83,3 +85,5 @@ __global__ void k_sweep_hypercube(
 
   k_accum_block_sum(local_naccept, &naccept[t]);
 }
+
+} // namespace ising_mcmc::cuda::fm

@@ -31,7 +31,7 @@ import seaborn as sns
 from numpy.typing import NDArray
 from tqdm.auto import tqdm
 
-from ising_mcmc.cuda import sweeps
+from ising_mcmc.cuda.fm import sweeps
 
 # %%
 cache = diskcache.Cache(".cache")
