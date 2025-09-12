@@ -21,13 +21,14 @@ import matplotlib.pyplot as plt
 # %%
 import numpy as np
 
-from ising_mcmc.cuda.fm import sweeps
+from ising_mcmc.cpu.fm import sweeps as sweeps_cpu
+from ising_mcmc.cuda.fm import sweeps as sweeps_gpu
 
 # %%
 rng = np.random.default_rng(0)
 
 # %%
-l = 1024
+l = 512
 
 # %%
 tc = 2.269
@@ -49,7 +50,19 @@ for s_t, ax in zip(spin, axs):
     ax.set_yticks([])
 
 # %%
-spin_, accept_rate, m2avg, m4avg = sweeps(spin, hext, temps, 10_000, 0)
+# %%time
+spin_, accept_rate, m2avg, m4avg = sweeps_cpu(spin, hext, temps, 1_000, 0)
+
+# %%
+_, axs = plt.subplots(1, 3, figsize=(10, 3))
+for s_t, ax in zip(spin_, axs):
+    ax.imshow(s_t)
+    ax.set_xticks([])
+    ax.set_yticks([])
+
+# %%
+# %%time
+spin_, accept_rate, m2avg, m4avg = sweeps_gpu(spin, hext, temps, 1_000, 0)
 
 # %%
 _, axs = plt.subplots(1, 3, figsize=(10, 3))
