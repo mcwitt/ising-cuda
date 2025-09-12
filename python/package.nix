@@ -1,6 +1,7 @@
 {
   buildPythonPackage,
   cmake,
+  gsl,
   nanobind,
   ninja,
   scikit-build-core,
@@ -33,6 +34,7 @@ buildPythonPackage {
   buildInputs = [
     cudaPackages.libcurand
     cudaPackages.cuda_cudart
+    gsl
   ];
 
   dependencies = [
@@ -43,6 +45,7 @@ buildPythonPackage {
 
   pythonImportsCheck = [
     "ising_mcmc"
+    "ising_mcmc.cpu"
     "ising_mcmc.cuda"
   ];
 
