@@ -1,4 +1,5 @@
 #include <format>
+#include <span>
 #include <vector>
 
 #include <curand.h>
@@ -105,20 +106,18 @@ auto get_sweep_kernel_and_launch_params(
 auto ising_mcmc::cuda::fm::sweeps(
     const unsigned int d,
     const unsigned int l,
-    const unsigned int nt,
-    const int *const spin,
-    const float *const hext,
-    const float *const temps,
+    const std::span<const float> hext,
+    const std::span<const float> temps,
     const unsigned int n_sweeps,
-    const unsigned long seed)
-    -> std::tuple<
-        std::vector<int>,
-        std::vector<float>,
-        std::vector<float>,
-        std::vector<float>> {
+    const unsigned long seed,
+    std::span<int> spin,
+    std::span<double> acceptrate,
+    std::span<double> m2,
+    std::span<double> m4) -> void {
 
   const auto strides = compute_strides(d, l);
   const unsigned int n = strides[d];
+  const unsigned int nt = temps.size();
 
   unsigned int *d_strides;
   int *d_spin;
@@ -138,13 +137,14 @@ auto ising_mcmc::cuda::fm::sweeps(
       cudaMemcpyHostToDevice);
 
   cudaMalloc(&d_spin, nt * n * sizeof(int));
-  cudaMemcpy(d_spin, spin, nt * n * sizeof(int), cudaMemcpyHostToDevice);
+  cudaMemcpy(d_spin, spin.data(), nt * n * sizeof(int), cudaMemcpyHostToDevice);
 
   cudaMalloc(&d_hext, nt * n * sizeof(float));
-  cudaMemcpy(d_hext, hext, nt * n * sizeof(float), cudaMemcpyHostToDevice);
+  cudaMemcpy(
+      d_hext, hext.data(), nt * n * sizeof(float), cudaMemcpyHostToDevice);
 
   cudaMalloc(&d_temps, nt * sizeof(float));
-  cudaMemcpy(d_temps, temps, nt * sizeof(float), cudaMemcpyHostToDevice);
+  cudaMemcpy(d_temps, temps.data(), nt * sizeof(float), cudaMemcpyHostToDevice);
 
   cudaMalloc(&d_noise, nt * n * sizeof(float));
   cudaMalloc(&d_naccept, nt * sizeof(unsigned long long));
@@ -200,9 +200,7 @@ auto ising_mcmc::cuda::fm::sweeps(
         n, nt, d_spinsum, d_m2sum, d_m4sum);
   }
 
-  std::vector<int> spin_(nt * n);
-  cudaMemcpy(
-      spin_.data(), d_spin, nt * n * sizeof(int), cudaMemcpyDeviceToHost);
+  cudaMemcpy(spin.data(), d_spin, nt * n * sizeof(int), cudaMemcpyDeviceToHost);
 
   std::vector<unsigned long long> naccept(nt);
   cudaMemcpy(
@@ -211,17 +209,13 @@ auto ising_mcmc::cuda::fm::sweeps(
       nt * sizeof(unsigned long long),
       cudaMemcpyDeviceToHost);
 
-  std::vector<float> m2avg(nt);
-  cudaMemcpy(m2avg.data(), d_m2sum, nt * sizeof(float), cudaMemcpyDeviceToHost);
+  cudaMemcpy(m2.data(), d_m2sum, nt * sizeof(float), cudaMemcpyDeviceToHost);
+  cudaMemcpy(m4.data(), d_m4sum, nt * sizeof(float), cudaMemcpyDeviceToHost);
 
-  std::vector<float> m4avg(nt);
-  cudaMemcpy(m4avg.data(), d_m4sum, nt * sizeof(float), cudaMemcpyDeviceToHost);
-
-  std::vector<float> acceptrate(nt);
   for (unsigned int t = 0; t < nt; ++t) {
-    acceptrate[t] = (float)naccept[t] / n_sweeps / n;
-    m2avg[t] /= n_sweeps;
-    m4avg[t] /= n_sweeps;
+    acceptrate[t] = (float)naccept[t] / (float)n_sweeps / n;
+    m2[t] /= n_sweeps;
+    m4[t] /= n_sweeps;
   }
 
   cudaFree(d_strides);
@@ -239,9 +233,4 @@ auto ising_mcmc::cuda::fm::sweeps(
     fprintf(stderr, "CUDA error: %s\n", cudaGetErrorString(err));
     throw std::runtime_error(cudaGetErrorString(err));
   }
-
-  std::vector<std::size_t> shape(d + 1, l);
-  shape[0] = nt;
-
-  return std::make_tuple(spin_, acceptrate, m2avg, m4avg);
 }
