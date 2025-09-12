@@ -71,8 +71,21 @@ NB_MODULE(cuda, m) {
           }
         }
 
-        auto [spin_, acceptrate, m2avg, m4avg] = ising_mcmc::cuda::fm::sweeps(
-            d, l, nt, spin.data(), hext.data(), temps.data(), n_sweeps, seed);
+        std::vector<float> hext_(hext.size());
+        std::copy(hext.data(), hext.data() + hext.size(), hext_.data());
+
+        std::vector<float> temps_(temps.size());
+        std::copy(temps.data(), temps.data() + temps.size(), temps_.data());
+
+        std::vector<int> spin_(spin.size());
+        std::copy(spin.data(), spin.data() + spin.size(), spin_.data());
+
+        std::vector<double> acceptrate(temps.size());
+        std::vector<double> m2(temps.size());
+        std::vector<double> m4(temps.size());
+
+        ising_mcmc::cuda::fm::sweeps(
+            d, l, hext_, temps_, n_sweeps, seed, spin_, acceptrate, m2, m4);
 
         std::vector<std::size_t> shape(d + 1, l);
         shape[0] = nt;
@@ -83,9 +96,7 @@ NB_MODULE(cuda, m) {
                 .cast(),
             nb::ndarray<nb::numpy, float, nb::ndim<1>>(acceptrate.data(), {nt})
                 .cast(),
-            nb::ndarray<nb::numpy, float, nb::ndim<1>>(m2avg.data(), {nt})
-                .cast(),
-            nb::ndarray<nb::numpy, float, nb::ndim<1>>(m4avg.data(), {nt})
-                .cast());
+            nb::ndarray<nb::numpy, float, nb::ndim<1>>(m2.data(), {nt}).cast(),
+            nb::ndarray<nb::numpy, float, nb::ndim<1>>(m4.data(), {nt}).cast());
       });
 }

@@ -119,8 +119,8 @@ auto get_hypercube_sweep_impl(const unsigned int d) -> SweepImpl {
   case 10:
     return sweep_impl<10>;
   default:
-    throw std::runtime_error(
-        std::format("sweep: dimension {} not implemented", d));
+    throw std::invalid_argument(std::format(
+        "number of dimensions must be between 1 and 10, but got {}", d));
   }
 }
 
