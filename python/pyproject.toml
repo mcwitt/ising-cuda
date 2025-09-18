@@ -5,7 +5,7 @@ build-backend = "scikit_build_core.build"
 [project]
 name = "ising-mcmc"
 version = "0.1.0"
-requires-python = ">=3.8"
+requires-python = ">=3.12"
 dependencies = []
 
 [project.optional-dependencies]
@@ -30,3 +30,14 @@ ignore = [
 minimum-version = "0.5"
 build-dir = "build/{wheel_tag}"
 editable.rebuild = true
+
+[tool.scikit-build.wheel]
+exclude = [
+  "**/*.cpp",
+  "**/*.cu",
+  "**/*.hpp",
+  "**/*.cuh"
+]
+
+[tool.scikit-build.wheel.packages]
+"ising_mcmc" = "src/ising_mcmc"
