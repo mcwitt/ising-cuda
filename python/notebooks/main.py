@@ -16,13 +16,13 @@
 # %config InlineBackend.figure_format = "retina"
 
 # %%
+import jax
 import matplotlib.pyplot as plt
-
-# %%
 import numpy as np
 
 from ising_mcmc.cpu.fm import sweeps as sweeps_cpu
-from ising_mcmc.cuda.fm import sweeps as sweeps_gpu
+from ising_mcmc.cuda.fm import sweeps as sweeps_cuda
+from ising_mcmc.jax.fm import sweeps as sweeps_jax
 
 # %%
 rng = np.random.default_rng(0)
@@ -50,8 +50,11 @@ for s_t, ax in zip(spin, axs):
     ax.set_yticks([])
 
 # %%
+n_sweeps = 1_000
+
+# %%
 # %%time
-spin_, accept_rate, m2avg, m4avg = sweeps_cpu(spin, hext, temps, 1_000, 0)
+spin_, accept_rate, m2avg, m4avg = sweeps_cpu(spin, hext, temps, n_sweeps, 0)
 
 # %%
 _, axs = plt.subplots(1, 3, figsize=(10, 3))
@@ -61,8 +64,8 @@ for s_t, ax in zip(spin_, axs):
     ax.set_yticks([])
 
 # %%
-# %%time
-spin_, accept_rate, m2avg, m4avg = sweeps_gpu(spin, hext, temps, 1_000, 0)
+# %%timeit
+spin_, accept_rate, m2avg, m4avg = sweeps_cuda(spin, hext, temps, n_sweeps, 0)
 
 # %%
 _, axs = plt.subplots(1, 3, figsize=(10, 3))
@@ -70,3 +73,20 @@ for s_t, ax in zip(spin_, axs):
     ax.imshow(s_t)
     ax.set_xticks([])
     ax.set_yticks([])
+
+# %%
+# %%timeit
+keys = jax.random.split(jax.random.key(1), (len(temps), n_sweeps))
+sweeps_jax_batched = jax.vmap(sweeps_jax)
+spin_, accept_rate, m2avg, m4avg = jax.block_until_ready(
+    sweeps_jax_batched(keys, spin, hext, temps)
+)
+
+# %%
+_, axs = plt.subplots(1, 3, figsize=(10, 3))
+for s_t, ax in zip(spin_, axs):
+    ax.imshow(s_t)
+    ax.set_xticks([])
+    ax.set_yticks([])
+
+# %%
