@@ -2,6 +2,8 @@
   buildPythonPackage,
   cmake,
   gsl,
+  jax,
+  jaxlib,
   nanobind,
   ninja,
   scikit-build-core,
@@ -38,6 +40,8 @@ buildPythonPackage {
   ];
 
   dependencies = [
+    jax
+    jaxlib
     numpy
   ];
 

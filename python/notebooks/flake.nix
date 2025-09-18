@@ -13,7 +13,10 @@
 
       pkgs = import nixpkgs {
         inherit system;
-        config.allowUnfree = true;
+        config = {
+          allowUnfree = true;
+          cudaSupport = true;
+        };
         overlays =
           let
             overlay = self: super: {
@@ -50,7 +53,6 @@
             let
               python = pkgs.python3.withPackages (
                 ps: with ps; [
-                  diskcache
                   ipywidgets
                   ising-mcmc
                   jupytext
@@ -61,16 +63,8 @@
               );
             in
             [
-              pkgs.clang-tools
-              pkgs.gdb
-
-              pkgs.cudaPackages.cuda_sanitizer_api
-              pkgs.cudaPackages.cuda_nvcc
-              pkgs.cudaPackages.cuda_cudart
-              pkgs.cudaPackages.libcurand
-
-              pkgs.basedpyright
               python
+              pkgs.basedpyright
             ];
 
           shellHook =

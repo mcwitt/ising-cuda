@@ -30,3 +30,14 @@ ignore = [
 minimum-version = "0.5"
 build-dir = "build/{wheel_tag}"
 editable.rebuild = true
+
+[tool.scikit-build.wheel]
+exclude = [
+  "**/*.cpp",
+  "**/*.cu",
+  "**/*.hpp",
+  "**/*.cuh"
+]
+
+[tool.scikit-build.wheel.packages]
+"ising_mcmc" = "src/ising_mcmc"
