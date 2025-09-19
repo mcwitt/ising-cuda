@@ -79,8 +79,9 @@ auto get_hypercube_sweep_kernel(const unsigned int d) -> SweepKernel {
   case 10:
     return k_sweep_nd<10>;
   default:
-    throw std::invalid_argument(std::format(
-        "number of dimensions must be between 1 and 10, but got {}", d));
+    throw std::invalid_argument(
+        std::format(
+            "number of dimensions must be between 1 and 10, but got {}", d));
   }
 }
 

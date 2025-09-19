@@ -297,8 +297,9 @@ auto main(int argc, char *argv[]) -> int {
 
   k_init_random<<<ceil_div(nt * n, 32), 32>>>(nt * n, d_noise, d_spin);
 
-  printf("D,L,h_ext,sweeps_per_sample,seed,temperature,sample,accept_rate,"
-         "<m^2>,<m^4>,time_s\n");
+  printf(
+      "D,L,h_ext,sweeps_per_sample,seed,temperature,sample,accept_rate,"
+      "<m^2>,<m^4>,time_s\n");
 
   for (int isample = 0; isample < n_samples; ++isample) {
 

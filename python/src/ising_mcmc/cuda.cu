@@ -28,40 +28,45 @@ NB_MODULE(cuda, m) {
 
         for (auto i = 1u; i < spin.ndim(); ++i) {
           if (spin.shape(i) != l)
-            throw std::invalid_argument(std::format(
-                "only hypercubic lattices are supported, but got conflicting "
-                "dimensions: spin.shape(1) = {}; spin.shape({}) = {}",
-                l,
-                i,
-                spin.shape(i)));
+            throw std::invalid_argument(
+                std::format(
+                    "only hypercubic lattices are supported, but got "
+                    "conflicting dimensions: spin.shape(1) = {}; "
+                    "spin.shape({}) = {}",
+                    l,
+                    i,
+                    spin.shape(i)));
         }
 
         if (hext.ndim() != spin.ndim()) {
-          throw std::invalid_argument(std::format(
-              "spin and hext must have same shape, but got conflicting numbers "
-              "of dimensions {} and {}",
-              spin.ndim(),
-              hext.ndim()));
+          throw std::invalid_argument(
+              std::format(
+                  "spin and hext must have same shape, but got conflicting "
+                  "numbers of dimensions {} and {}",
+                  spin.ndim(),
+                  hext.ndim()));
         }
 
         for (auto i = 0u; i < spin.ndim(); ++i) {
           if (spin.shape(i) != hext.shape(i)) {
-            throw std::invalid_argument(std::format(
-                "spin and hext must have same shape, but got conflicting sizes "
-                "{} and {} in dimension {}",
-                spin.shape(i),
-                hext.shape(i),
-                i));
+            throw std::invalid_argument(
+                std::format(
+                    "spin and hext must have same shape, but got conflicting "
+                    "sizes {} and {} in dimension {}",
+                    spin.shape(i),
+                    hext.shape(i),
+                    i));
           }
         }
 
         if (temps.size() != nt)
-          throw std::invalid_argument(std::format(
-              "first dimensions of spin, hext, and temps must match, but got "
-              "{} and {}",
-              spin.shape(0),
-              hext.shape(0),
-              temps.size()));
+          throw std::invalid_argument(
+              std::format(
+                  "first dimensions of spin, hext, and temps must match, but "
+                  "got {} and {}",
+                  spin.shape(0),
+                  hext.shape(0),
+                  temps.size()));
 
         for (auto i = 0u; i < spin.size(); ++i) {
           const auto s = spin.data()[i];

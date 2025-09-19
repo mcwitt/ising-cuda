@@ -130,8 +130,9 @@ int main(int argc, char *argv[]) {
   rng = gsl_rng_alloc(gsl_rng_mt19937);
   gsl_rng_set(rng, seed);
 
-  printf("D,L,h_ext,sweeps_per_sample,seed,temperature,sample,accept_rate,"
-         "<m^2>,<m^4>,time_s\n");
+  printf(
+      "D,L,h_ext,sweeps_per_sample,seed,temperature,sample,accept_rate,"
+      "<m^2>,<m^4>,time_s\n");
 
   while (scanf("%f", &temperature) == 1) {
 
