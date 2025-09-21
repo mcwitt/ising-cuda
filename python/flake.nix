@@ -13,7 +13,10 @@
 
       pkgs = import nixpkgs {
         inherit system;
-        config.allowUnfree = true;
+        config = {
+          allowUnfree = true;
+          cudaSupport = true;
+        };
         overlays =
           let
             overlay = self: super: {
