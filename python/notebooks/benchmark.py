@@ -16,6 +16,8 @@
 # %config InlineBackend.figure_format = "retina"
 
 # %%
+from functools import partial
+from math import log2
 from time import perf_counter
 from typing import Literal, cast
 
@@ -29,9 +31,14 @@ from tqdm.auto import tqdm
 from ising_mcmc.cpu.fm import sweeps as sweeps_cpu
 from ising_mcmc.cuda.fm import sweeps as sweeps_cuda
 from ising_mcmc.jax.fm import sweeps as sweeps_jax
+from ising_mcmc.pallas.fm import sweeps as sweeps_pallas
 
 # %%
-type Version = Literal["cpu", "cuda", "jax"]
+type Version = Literal["cpu", "cuda", "jax", "pallas"]
+
+
+def nearest_power_of_2(n):
+    return 2 ** round(log2(n))
 
 
 def measure_wall_time(
@@ -63,6 +70,15 @@ def measure_wall_time(
         )
         result = jax.vmap(sweeps_jax)(keys_by_temp, spin, h_ext, temperatures)
         jax.block_until_ready(result)
+    elif version == "pallas":
+        keys_by_temp = jax.random.split(
+            jax.random.key(seed), (len(temperatures), n_sweeps)
+        )
+        tile_size = nearest_power_of_2(256 ** (1 / ndim))
+        result = jax.jit(jax.vmap(partial(sweeps_pallas, tile_size=tile_size)))(
+            keys_by_temp, spin, h_ext, temperatures
+        )
+        jax.block_until_ready(result)
     else:
         raise ValueError(f"unknown version: {version}")
 
@@ -76,7 +92,12 @@ temperatures = np.array([2.26, 2.27, 2.28], dtype=np.float32)
 
 params_tuples: list[tuple[Version, int, int, int]] = [
     (cast(Version, version), ndim, size, seed)
-    for version in ["cpu", "cuda", "jax"]
+    for version in [
+        "cpu",
+        "cuda",
+        "jax",
+        "pallas",
+    ]
     for ndim, size in [
         (2, 32),
         (2, 48),
@@ -131,7 +152,9 @@ results = pd.DataFrame.from_records(
 # %%
 sns.FacetGrid(results.reset_index(), col="ndim", sharex=False).map_dataframe(
     sns.lineplot, x="size", y="wall_time", hue="version", estimator="median"
-).add_legend()
+).set(yscale="log").add_legend()
 
 # %%
 results.unstack("version")
+
+# %%
