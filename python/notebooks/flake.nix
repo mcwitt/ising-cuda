@@ -41,6 +41,8 @@
               ps: with ps; [
                 ipywidgets
                 ising-mcmc
+                jax
+                jaxlib
                 jupytext
                 notebook
                 seaborn
