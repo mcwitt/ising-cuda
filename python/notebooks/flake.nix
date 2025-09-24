@@ -26,11 +26,9 @@
                   ising-mcmc = pySelf.callPackage ../package.nix { };
 
                   nanobind = pySuper.nanobind.overrideAttrs (old: {
-                    postInstall =
-                      (old.postInstall or "")
-                      + ''
-                        ln -sf $out/lib/${pySelf.python.libPrefix}/site-packages/nanobind/include $out
-                      '';
+                    postInstall = (old.postInstall or "") + ''
+                      ln -sf $out/lib/${pySelf.python.libPrefix}/site-packages/nanobind/include $out
+                    '';
                   });
                 })
               ];
@@ -51,13 +49,16 @@
         pkgs.mkShell {
           packages =
             let
-              python = pkgs.python3.withPackages (
+              python = pkgs.python312.withPackages (
                 ps: with ps; [
                   ipywidgets
                   ising-mcmc
+                  jax
+                  jaxlib
                   jupytext
                   notebook
                   seaborn
+                  tensorflow
                   tqdm
                 ]
               );
@@ -67,13 +68,12 @@
               pkgs.basedpyright
             ];
 
-          shellHook =
-            ''
-              export PYTHONPATH=build/:$PYTHONPATH
-            ''
-            + nixpkgs.lib.optionalString useNixgl ''
-              export LD_LIBRARY_PATH=$(${pkgs.nixgl.auto.nixGLDefault}/bin/nixGL printenv LD_LIBRARY_PATH):$LD_LIBRARY_PATH
-            '';
+          shellHook = ''
+            export PYTHONPATH=build/:$PYTHONPATH
+          ''
+          + nixpkgs.lib.optionalString useNixgl ''
+            export LD_LIBRARY_PATH=$(${pkgs.nixgl.auto.nixGLDefault}/bin/nixGL printenv LD_LIBRARY_PATH):$LD_LIBRARY_PATH
+          '';
         };
     };
 }
