@@ -23,6 +23,7 @@ select = [
   "W",
 ]
 ignore = [
+  "E402", # Module level import not at top of file
   "E741", # Do not use variables named 'I', 'O', or 'l'
 ]
 

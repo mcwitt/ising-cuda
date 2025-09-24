@@ -49,13 +49,16 @@
         pkgs.mkShell {
           packages =
             let
-              python = pkgs.python3.withPackages (
+              python = pkgs.python312.withPackages (
                 ps: with ps; [
                   ipywidgets
                   ising-mcmc
+                  jax
+                  jaxlib
                   jupytext
                   notebook
                   seaborn
+                  tensorflow
                   tqdm
                 ]
               );
