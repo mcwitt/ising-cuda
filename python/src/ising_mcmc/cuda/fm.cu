@@ -74,13 +74,14 @@ auto get_sweep_kernel_and_launch_params(
     const unsigned int n) -> std::tuple<SweepKernel, dim3, dim3> {
   switch (d) {
   case 2:
+    using ising_mcmc::cuda::fm::TILE_SIZE;
     return std::make_tuple(
         ising_mcmc::cuda::fm::k_sweep_2d,
-        dim3(16, 16),
-        dim3(ceil_div(l, 16), ceil_div(l, 16), nt));
+        dim3(TILE_SIZE, TILE_SIZE, 1),
+        dim3(ceil_div(l, TILE_SIZE), ceil_div(l, TILE_SIZE), nt));
   default:
     return std::make_tuple(
-        get_hypercube_sweep_kernel(d), dim3(256), dim3(ceil_div(n, 256), nt));
+        get_hypercube_sweep_kernel(d), dim3(TPB), dim3(ceil_div(n, TPB), nt));
   }
 }
 

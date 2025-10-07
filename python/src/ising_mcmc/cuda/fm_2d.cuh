@@ -1,5 +1,7 @@
 namespace ising_mcmc::cuda::fm {
 
+constexpr unsigned int TILE_SIZE = 16;
+
 __global__ void k_sweep_2d(
     const unsigned int parity,
     const unsigned int *const __restrict__ d_strides,
@@ -10,4 +12,4 @@ __global__ void k_sweep_2d(
     int *const __restrict__ spin,
     unsigned long long *const __restrict__ naccept);
 
-}
+} // namespace ising_mcmc::cuda::fm
