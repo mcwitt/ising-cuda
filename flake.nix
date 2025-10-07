@@ -23,6 +23,7 @@
         };
         overlays = [
           nixgl.overlays.default
+          (import ./nix/overlays/nsight-compute-symlinks.nix)
         ];
       };
     in
@@ -74,6 +75,7 @@
             pkgs.cudaPackages.cuda_nvcc
             pkgs.cudaPackages.cuda_cudart
             pkgs.cudaPackages.libcurand
+            pkgs.cudaPackages.nsight_compute
 
             pkgs.gsl
 
