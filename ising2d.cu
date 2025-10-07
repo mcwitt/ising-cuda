@@ -10,6 +10,7 @@
 constexpr unsigned int D_ = 2;
 
 constexpr unsigned int WARP_SIZE = 32;
+constexpr unsigned int TILE_SIZE = 16;
 
 __global__ void k_init_random(
     const unsigned int n,
@@ -84,15 +85,33 @@ __global__ void k_sweep(
     int *const __restrict__ spin,
     unsigned long long *const __restrict__ naccept) {
 
-  const unsigned int j = blockIdx.x * blockDim.x + threadIdx.x;
-  const unsigned int i = blockIdx.y * blockDim.y + threadIdx.y;
+  // 1. Compute tile and element indices
+
+  const unsigned int jtile = blockIdx.x * blockDim.x; // tile start index
+  const unsigned int j = jtile + threadIdx.x;         // element index
+  if (j >= l)
+    return;
+
+  const unsigned int itile = blockIdx.y * blockDim.y; // tile start index
+  const unsigned int i = itile + threadIdx.y;         // element index
+  if (i >= l)
+    return;
 
   // reduction of naccept assumes block has consistent temperature
   assert(blockDim.z == 1);
   const unsigned int t = blockIdx.z;
-
-  if (t >= nt || i >= l || j >= l)
+  if (t >= nt)
     return;
+
+  const unsigned int ibatch = t * l * l; // batch start index
+
+  // 2. Load tile into shared memory
+
+  __shared__ int spin_s[TILE_SIZE][TILE_SIZE];
+  spin_s[threadIdx.y][threadIdx.x] = spin[ibatch + i * l + j];
+  __syncthreads(); // ensure all threads see updated spin_s in following code
+
+  // 3. Compute output element
 
   int local_naccept = 0;
 
@@ -104,14 +123,21 @@ __global__ void k_sweep(
     const unsigned int inext = (i == l - 1) ? 0 : i + 1;
     const unsigned int jnext = (j == l - 1) ? 0 : j + 1;
 
-    const unsigned int offset = t * l * l;
+    auto const get_spin = [=](const unsigned int i,
+                              const unsigned int j) -> auto {
+      const unsigned int is = i - itile;
+      const unsigned int js = j - jtile;
 
-    const int nbrsum =
-        spin[offset + i * l + jprev] + spin[offset + i * l + jnext] +
-        spin[offset + iprev * l + j] + spin[offset + inext * l + j];
+      // NOTE: case where i - itile < 0 handled by wraparound of unsigned int
+      return ((is < TILE_SIZE) && (js < TILE_SIZE)) ? spin_s[is][js]
+                                                    : spin[ibatch + i * l + j];
+    };
+
+    const int nbrsum = get_spin(i, jprev) + get_spin(i, jnext) +
+                       get_spin(iprev, j) + get_spin(inext, j);
 
     const float h = static_cast<float>(nbrsum) + hext;
-    const unsigned int idx = offset + i * l + j;
+    const unsigned int idx = ibatch + i * l + j;
     const int s = spin[idx];
     const float de = static_cast<float>(2 * s) * h;
 
@@ -253,7 +279,7 @@ auto main(int argc, char *argv[]) -> int {
 
       // checkerboard updates
 
-      constexpr dim3 block_dim(16, 16);
+      constexpr dim3 block_dim(TILE_SIZE, TILE_SIZE);
       static_assert(block_dim.z == 1, "require block_dim.z == 1");
 
       const dim3 grid_dim(

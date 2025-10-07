@@ -1,5 +1,8 @@
 #pragma once
 
+constexpr unsigned int TPB = 256;
+constexpr unsigned int WARP_SIZE = 32;
+
 constexpr __host__ __device__ auto ceil_div(unsigned int x, unsigned int y)
     -> unsigned int {
   return (x + y - 1) / y;
@@ -12,7 +15,7 @@ template <typename T> __device__ void k_accum_block_sum(int &val, T *out) {
 
   // 1. Compute sum of values in each warp
 
-  for (int offset = warpSize / 2; offset > 0; offset /= 2) {
+  for (int offset = WARP_SIZE / 2; offset > 0; offset /= 2) {
     val += __shfl_down_sync(0xFFFFFFFF, val, offset);
   }
 
@@ -21,12 +24,12 @@ template <typename T> __device__ void k_accum_block_sum(int &val, T *out) {
 
   // 2. Warp leaders store warp sums in shared memory
 
-  __shared__ int warp_sums[32];
+  __shared__ int warp_sums[WARP_SIZE];
 
   const unsigned int tid = threadIdx.x + threadIdx.y * blockDim.x;
 
-  if (tid % warpSize == 0) {
-    warp_sums[tid / warpSize] = val;
+  if (tid % WARP_SIZE == 0) {
+    warp_sums[tid / WARP_SIZE] = val;
   }
 
   // 3. Threads in first warp reduce warp sums
@@ -34,12 +37,12 @@ template <typename T> __device__ void k_accum_block_sum(int &val, T *out) {
   __syncthreads(); // ensure all threads see the final value of warp_sums
 
   const unsigned int tpb = blockDim.x * blockDim.y;
-  const unsigned int nwarps = ceil_div(tpb, warpSize);
+  const unsigned int nwarps = ceil_div(tpb, WARP_SIZE);
 
-  if (tid < warpSize) {
+  if (tid < WARP_SIZE) {
     val = (tid < nwarps) ? warp_sums[tid] : 0;
 
-    for (int offset = warpSize / 2; offset > 0; offset /= 2) {
+    for (int offset = WARP_SIZE / 2; offset > 0; offset /= 2) {
       val += __shfl_down_sync(0xFFFFFFFF, val, offset);
     }
 

@@ -277,6 +277,9 @@ def sweeps_cuda(spin, temperature, n_sweeps, seed):
 
 
 # %%
+make_plots(sweeps_cuda)
+
+# %%
 cuda_timing = benchmark(sweeps_cuda)
 cuda_timing, cuda_timing / sequential_cpu_timing
 
