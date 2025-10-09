@@ -253,15 +253,16 @@ auto main(int argc, char *argv[]) -> int {
 
       // checkerboard updates
 
-      constexpr dim3 blockDim(16, 16);
-      static_assert(blockDim.z == 1, "require blockDim.z == 1");
+      constexpr dim3 block_dim(16, 16);
+      static_assert(block_dim.z == 1, "require block_dim.z == 1");
 
-      const dim3 gridDim(ceil_div(l, blockDim.x), ceil_div(l, blockDim.y), nt);
+      const dim3 grid_dim(
+          ceil_div(l, block_dim.x), ceil_div(l, block_dim.y), nt);
 
-      k_sweep<<<gridDim, blockDim>>>(
+      k_sweep<<<grid_dim, block_dim>>>(
           0, l, hext, nt, d_temps, d_noise, d_spin, d_naccept); // light squares
 
-      k_sweep<<<gridDim, blockDim>>>(
+      k_sweep<<<grid_dim, block_dim>>>(
           1, l, hext, nt, d_temps, d_noise, d_spin, d_naccept); // dark squares
 
       // accumulate magnetization

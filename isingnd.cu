@@ -297,12 +297,12 @@ auto main(int argc, char *argv[]) -> int {
 
       // checkerboard updates
 
-      constexpr dim3 blockDim(256);
-      dim3 gridDim(ceil_div(n, blockDim.x), ceil_div(nt, blockDim.z), 1);
+      constexpr dim3 block_dim(256);
+      dim3 grid_dim(ceil_div(n, block_dim.x), ceil_div(nt, block_dim.z));
 
-      static_assert(blockDim.z == 1, "require blockDim.z == 1");
+      static_assert(block_dim.z == 1, "require block_dim.z == 1");
 
-      k_sweep<<<gridDim, blockDim>>>(
+      k_sweep<<<grid_dim, block_dim>>>(
           0,
           hext,
           nt,
@@ -311,7 +311,7 @@ auto main(int argc, char *argv[]) -> int {
           d_spin,
           d_naccept); // light squares
 
-      k_sweep<<<gridDim, blockDim>>>(
+      k_sweep<<<grid_dim, block_dim>>>(
           1,
           hext,
           nt,
