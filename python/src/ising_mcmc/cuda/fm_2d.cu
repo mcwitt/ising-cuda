@@ -35,7 +35,7 @@ __global__ void ising_mcmc::cuda::fm::k_sweep_2d(
 
   // 2. Load tile into shared memory
 
-  __shared__ int spin_s[TILE_SIZE][TILE_SIZE];
+  __shared__ int spin_s[TILE_SIZE_Y][TILE_SIZE_X];
   spin_s[threadIdx.y][threadIdx.x] = spin[ibatch + i * l + j];
   __syncthreads();
 
@@ -57,8 +57,9 @@ __global__ void ising_mcmc::cuda::fm::k_sweep_2d(
       const unsigned int js = j - jtile;
 
       // NOTE: case where i - itile < 0 handled by wraparound of unsigned int
-      return ((is < TILE_SIZE) && (js < TILE_SIZE)) ? spin_s[is][js]
-                                                    : spin[ibatch + i * l + j];
+      return ((is < TILE_SIZE_Y) && (js < TILE_SIZE_X))
+                 ? spin_s[is][js]
+                 : spin[ibatch + i * l + j];
     };
 
     const int nbrsum = get_spin(i, jprev) + get_spin(i, jnext) +

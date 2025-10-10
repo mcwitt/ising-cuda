@@ -1,6 +1,7 @@
 namespace ising_mcmc::cuda::fm {
 
-constexpr unsigned int TILE_SIZE = 16;
+constexpr unsigned int TILE_SIZE_X = 32;
+constexpr unsigned int TILE_SIZE_Y = 8;
 
 __global__ void k_sweep_2d(
     const unsigned int parity,
