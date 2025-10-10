@@ -10,7 +10,10 @@
 constexpr unsigned int D_ = 2;
 
 constexpr unsigned int WARP_SIZE = 32;
-constexpr unsigned int TILE_SIZE = 16;
+
+// rectangular tiles with width >= WARP_SIZE allow for coalesced memory access per warp
+constexpr unsigned int TILE_SIZE_X = 32;
+constexpr unsigned int TILE_SIZE_Y = 8;
 
 __global__ void k_init_random(
     const unsigned int n,
@@ -107,7 +110,7 @@ __global__ void k_sweep(
 
   // 2. Load tile into shared memory
 
-  __shared__ int spin_s[TILE_SIZE][TILE_SIZE];
+  __shared__ int spin_s[TILE_SIZE_Y][TILE_SIZE_X];
   spin_s[threadIdx.y][threadIdx.x] = spin[ibatch + i * l + j];
   __syncthreads(); // ensure all threads see updated spin_s in following code
 
@@ -129,8 +132,9 @@ __global__ void k_sweep(
       const unsigned int js = j - jtile;
 
       // NOTE: case where i - itile < 0 handled by wraparound of unsigned int
-      return ((is < TILE_SIZE) && (js < TILE_SIZE)) ? spin_s[is][js]
-                                                    : spin[ibatch + i * l + j];
+      return ((is < TILE_SIZE_Y) && (js < TILE_SIZE_X))
+                 ? spin_s[is][js]
+                 : spin[ibatch + i * l + j];
     };
 
     const int nbrsum = get_spin(i, jprev) + get_spin(i, jnext) +
@@ -279,7 +283,7 @@ auto main(int argc, char *argv[]) -> int {
 
       // checkerboard updates
 
-      constexpr dim3 block_dim(TILE_SIZE, TILE_SIZE);
+      constexpr dim3 block_dim(TILE_SIZE_X, TILE_SIZE_Y);
       static_assert(block_dim.z == 1, "require block_dim.z == 1");
 
       const dim3 grid_dim(
